@@ -51,7 +51,7 @@ func (e ExistsError) Error() string {
 // Session should be closed via `.Close` call to free obtained OS resources
 // even if `.Process` has never been called.
 type Session struct {
-	guid     windows.GUID
+	guids     []windows.GUID
 	config   SessionOptions
 	callback EventCallback
 
@@ -89,7 +89,34 @@ func NewSession(providerGUID windows.GUID, options ...Option) (*Session, error) 
 		opt(&defaultConfig)
 	}
 	s := Session{
-		guid:   providerGUID,
+		guids:   []windows.GUID{providerGUID},
+		config: defaultConfig,
+	}
+
+	utf16Name, err := windows.UTF16FromString(s.config.Name)
+	if err != nil {
+		return nil, fmt.Errorf("incorrect session name; %w", err) // unlikely
+	}
+	s.etwSessionName = utf16Name
+
+	if err := s.createETWSession(); err != nil {
+		return nil, fmt.Errorf("failed to create session; %w", err)
+	}
+	// TODO: consider setting a finalizer with .Close
+
+	return &s, nil
+}
+
+func NewMultipleSession(providerGUIDs []windows.GUID, options ...Option) (*Session, error) {
+	defaultConfig := SessionOptions{
+		Name:  "go-etw-" + randomName(),
+		Level: TRACE_LEVEL_VERBOSE,
+	}
+	for _, opt := range options {
+		opt(&defaultConfig)
+	}
+	s := Session{
+		guids:   providerGUIDs,
 		config: defaultConfig,
 	}
 
@@ -147,6 +174,7 @@ func (s *Session) Close() error {
 	// "Be sure to disable all providers before stopping the session."
 	// https://docs.microsoft.com/en-us/windows/win32/etw/configuring-and-starting-an-event-tracing-session
 	if err := s.unsubscribeFromProvider(); err != nil {
+		s.stopSession()
 		return fmt.Errorf("failed to disable provider; %w", err)
 	}
 
@@ -257,62 +285,69 @@ func (s *Session) subscribeToProvider() error {
 		params.EnableProperty |= C.ULONG(p)
 	}
 
-	// ULONG WMIAPI EnableTraceEx2(
-	//	TRACEHANDLE              TraceHandle,
-	//	LPCGUID                  ProviderId,
-	//	ULONG                    ControlCode,
-	//	UCHAR                    Level,
-	//	ULONGLONG                MatchAnyKeyword,
-	//	ULONGLONG                MatchAllKeyword,
-	//	ULONG                    Timeout,
-	//	PENABLE_TRACE_PARAMETERS EnableParameters
-	// );
-	//
-	// Ref: https://docs.microsoft.com/en-us/windows/win32/api/evntrace/nf-evntrace-enabletraceex2
-	ret := C.EnableTraceEx2(
-		s.hSession,
-		(*C.GUID)(unsafe.Pointer(&s.guid)),
-		C.EVENT_CONTROL_CODE_ENABLE_PROVIDER,
-		C.UCHAR(s.config.Level),
-		C.ULONGLONG(s.config.MatchAnyKeyword),
-		C.ULONGLONG(s.config.MatchAllKeyword),
-		0,       // Timeout set to zero to enable the trace asynchronously
-		&params, //nolint:gocritic // TODO: dupSubExpr?? gocritic bug?
-	)
+	var lastError error
 
-	if status := windows.Errno(ret); status != windows.ERROR_SUCCESS {
-		return fmt.Errorf("EVENT_CONTROL_CODE_ENABLE_PROVIDER failed; %w", status)
+	for _, guid := range s.guids {
+
+		// ULONG WMIAPI EnableTraceEx2(
+		//	TRACEHANDLE              TraceHandle,
+		//	LPCGUID                  ProviderId,
+		//	ULONG                    ControlCode,
+		//	UCHAR                    Level,
+		//	ULONGLONG                MatchAnyKeyword,
+		//	ULONGLONG                MatchAllKeyword,
+		//	ULONG                    Timeout,
+		//	PENABLE_TRACE_PARAMETERS EnableParameters
+		// );
+		//
+		// Ref: https://docs.microsoft.com/en-us/windows/win32/api/evntrace/nf-evntrace-enabletraceex2
+		ret := C.EnableTraceEx2(
+			s.hSession,
+			(*C.GUID)(unsafe.Pointer(&guid)),
+			C.EVENT_CONTROL_CODE_ENABLE_PROVIDER,
+			C.UCHAR(s.config.Level),
+			C.ULONGLONG(s.config.MatchAnyKeyword),
+			C.ULONGLONG(s.config.MatchAllKeyword),
+			0,       // Timeout set to zero to enable the trace asynchronously
+			&params, //nolint:gocritic // TODO: dupSubExpr?? gocritic bug?
+		)
+
+		if status := windows.Errno(ret); status != windows.ERROR_SUCCESS {
+			lastError = fmt.Errorf("EVENT_CONTROL_CODE_ENABLE_PROVIDER failed for GUID %s; %w", guid, status)
+		}
 	}
-	return nil
+	return lastError
 }
 
 // unsubscribeFromProvider wraps EnableTraceEx2 with EVENT_CONTROL_CODE_DISABLE_PROVIDER.
 func (s *Session) unsubscribeFromProvider() error {
-	// ULONG WMIAPI EnableTraceEx2(
-	//	TRACEHANDLE              TraceHandle,
-	//	LPCGUID                  ProviderId,
-	//	ULONG                    ControlCode,
-	//	UCHAR                    Level,
-	//	ULONGLONG                MatchAnyKeyword,
-	//	ULONGLONG                MatchAllKeyword,
-	//	ULONG                    Timeout,
-	//	PENABLE_TRACE_PARAMETERS EnableParameters
-	// );
-	ret := C.EnableTraceEx2(
-		s.hSession,
-		(*C.GUID)(unsafe.Pointer(&s.guid)),
-		C.EVENT_CONTROL_CODE_DISABLE_PROVIDER,
-		0,
-		0,
-		0,
-		0,
-		nil)
-	status := windows.Errno(ret)
-	switch status {
-	case windows.ERROR_SUCCESS, windows.ERROR_NOT_FOUND:
-		return nil
+	var lastError error
+	for _, guid := range s.guids {
+		// ULONG WMIAPI EnableTraceEx2(
+		//	TRACEHANDLE              TraceHandle,
+		//	LPCGUID                  ProviderId,
+		//	ULONG                    ControlCode,
+		//	UCHAR                    Level,
+		//	ULONGLONG                MatchAnyKeyword,
+		//	ULONGLONG                MatchAllKeyword,
+		//	ULONG                    Timeout,
+		//	PENABLE_TRACE_PARAMETERS EnableParameters
+		// );
+		ret := C.EnableTraceEx2(
+			s.hSession,
+			(*C.GUID)(unsafe.Pointer(&guid)),
+			C.EVENT_CONTROL_CODE_DISABLE_PROVIDER,
+			0,
+			0,
+			0,
+			0,
+			nil)
+		status := windows.Errno(ret)
+		if status != windows.ERROR_SUCCESS && status != windows.ERROR_NOT_FOUND {
+			lastError = fmt.Errorf("EVENT_CONTROL_CODE_DISABLE_PROVIDER failed for GUID %s; %w", guid, status)
+		}
 	}
-	return status
+	return lastError
 }
 
 // processEvents subscribes to the actual provider events and starts its processing.

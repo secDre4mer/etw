@@ -10,165 +10,23 @@ import (
 )
 
 /*
+// MinGW headers are always restricted to the lowest possible Windows version,
+// so specify Win7+ manually.
+#undef _WIN32_WINNT
+#define _WIN32_WINNT _WIN32_WINNT_WIN7
+
 #include <windows.h>
-
-typedef struct _TRACE_PROVIDER_INFO {
-  GUID  ProviderGuid;
-  ULONG SchemaSource;
-  ULONG ProviderNameOffset;
-} TRACE_PROVIDER_INFO;
-
-typedef struct _PROVIDER_ENUMERATION_INFO {
-  ULONG               NumberOfProviders;
-  ULONG               Reserved;
-  TRACE_PROVIDER_INFO TraceProviderInfoArray[ANYSIZE_ARRAY];
-} PROVIDER_ENUMERATION_INFO;
+#include <tdh.h>
  */
 import "C"
 
 var (
 	enumerateProviders = tdh.NewProc("TdhEnumerateProviders")
-	enumerateProviderFieldInformation = tdh.NewProc("TdhEnumerateProviderFieldInformation")
-	queryProviderFieldInformation = tdh.NewProc("TdhQueryProviderFieldInformation")
 )
 
 type Provider struct {
 	Name string
 	Guid windows.GUID
-}
-
-type ProviderField struct {
-	Name string
-	Description string
-	ID uint64
-}
-
-type providerFieldInfoArray struct {
-	NumberOfElements uint32
-	FieldType uint32
-	FieldInfoArray [0]providerFieldInfo
-}
-
-type providerFieldInfo struct {
-	NameOffset uint32
-	DescriptionOffset uint32
-	Value uint64
-}
-
-type eventFieldType uintptr
-
-const(
-	eventKeywordInformation eventFieldType = iota
-	eventLevelInformation
-	eventChannelInformation
-	eventTaskInformation
-	eventOpcodeInformation
-)
-
-func (p Provider) QueryOpcode(taskValue uint16, opcodeValue uint8) (ProviderField, error) {
-	fieldValue := uint64(taskValue) + (uint64(opcodeValue) << 16)
-	fieldList, err := p.QueryField(fieldValue, eventOpcodeInformation)
-	if err != nil {
-		return ProviderField{}, err
-	}
-	if len(fieldList) == 0 {
-		return ProviderField{}, fmt.Errorf("no information returned")
-	}
-	return fieldList[0], nil
-}
-
-func (p Provider) QueryTask(taskValue uint16) (ProviderField, error) {
-	fieldList, err := p.QueryField(uint64(taskValue), eventTaskInformation)
-	if err != nil {
-		return ProviderField{}, err
-	}
-	if len(fieldList) == 0 {
-		return ProviderField{}, fmt.Errorf("no information returned")
-	}
-	return fieldList[0], nil
-}
-
-func (p Provider) QueryField(fieldValue uint64, fieldType eventFieldType) ([]ProviderField, error) {
-	var requiredSize int32
-	status, _, _ := queryProviderFieldInformation.Call(
-		uintptr(unsafe.Pointer(&p.Guid)),
-		uintptr(fieldValue),
-		uintptr(fieldType),
-		0,
-		uintptr(unsafe.Pointer(&requiredSize)),
-	)
-	if status != uintptr(windows.ERROR_INSUFFICIENT_BUFFER) {
-		return nil, windows.Errno(status)
-	}
-	if requiredSize == 0 {
-		return nil, nil
-	}
-	var buffer = make([]byte, requiredSize)
-	status, _, _ = queryProviderFieldInformation.Call(
-		uintptr(unsafe.Pointer(&p.Guid)),
-		uintptr(fieldValue),
-		uintptr(fieldType),
-		uintptr(unsafe.Pointer(&buffer[0])),
-		uintptr(unsafe.Pointer(&requiredSize)),
-	)
-	if status != uintptr(windows.ERROR_SUCCESS) {
-		return nil, windows.Errno(status)
-	}
-	return parseFieldInfoArray(buffer), nil
-}
-
-func (p Provider) ListKeywords() ([]ProviderField, error) {
-	return p.listFields(eventKeywordInformation)
-}
-
-func (p Provider) ListLevels() ([]ProviderField, error) {
-	return p.listFields(eventLevelInformation)
-}
-
-func (p Provider) ListChannels() ([]ProviderField, error) {
-	return p.listFields(eventChannelInformation)
-}
-
-func (p Provider) listFields(fieldType eventFieldType) ([]ProviderField, error) {
-	var requiredSize int32
-	status, _, _ := enumerateProviderFieldInformation.Call(
-		uintptr(unsafe.Pointer(&p.Guid)),
-		uintptr(fieldType),
-		0,
-		uintptr(unsafe.Pointer(&requiredSize)),
-	)
-	if status != uintptr(windows.ERROR_INSUFFICIENT_BUFFER) {
-		return nil, windows.Errno(status)
-	}
-	if requiredSize == 0 {
-		return nil, nil
-	}
-	var buffer = make([]byte, requiredSize)
-	status, _, _ = enumerateProviderFieldInformation.Call(
-		uintptr(unsafe.Pointer(&p.Guid)),
-		uintptr(fieldType),
-		uintptr(unsafe.Pointer(&buffer[0])),
-		uintptr(unsafe.Pointer(&requiredSize)),
-	)
-	if status != uintptr(windows.ERROR_SUCCESS) {
-		return nil, windows.Errno(status)
-	}
-	return parseFieldInfoArray(buffer), nil
-}
-
-func parseFieldInfoArray(buffer []byte) []ProviderField {
-	infoArray := (*providerFieldInfoArray)(unsafe.Pointer(&buffer[0]))
-	// Recast field info array to escape golang boundary checks
-	fieldInfoArray := (*[1 << 25]providerFieldInfo)(unsafe.Pointer(&infoArray.FieldInfoArray))
-	var fields []ProviderField
-	for _, fieldInfo := range fieldInfoArray[:infoArray.NumberOfElements] {
-		fields = append(fields, ProviderField{
-			Name:        parseUnicodeStringAtOffset(buffer, int(fieldInfo.NameOffset)),
-			Description: parseUnicodeStringAtOffset(buffer, int(fieldInfo.DescriptionOffset)),
-			ID:          fieldInfo.Value,
-		})
-	}
-	return fields
 }
 
 func LookupProvider(name string) (Provider, error) {

@@ -80,16 +80,14 @@ type EventCallback func(e *Event)
 //
 // You MUST call `.Close` on session after use to clear associated resources,
 // otherwise it will leak in OS internals until system reboot.
-func NewSession(providerGUID windows.GUID, options ...Option) (*Session, error) {
+func NewSession(options ...SessionOption) (*Session, error) {
 	defaultConfig := SessionOptions{
 		Name:  "go-etw-" + randomName(),
-		Level: TRACE_LEVEL_VERBOSE,
 	}
 	for _, opt := range options {
 		opt(&defaultConfig)
 	}
 	s := Session{
-		guids:   []windows.GUID{providerGUID},
 		config: defaultConfig,
 	}
 
@@ -107,31 +105,20 @@ func NewSession(providerGUID windows.GUID, options ...Option) (*Session, error) 
 	return &s, nil
 }
 
-func NewMultipleSession(providerGUIDs []windows.GUID, options ...Option) (*Session, error) {
-	defaultConfig := SessionOptions{
-		Name:  "go-etw-" + randomName(),
+// AddProvider adds a provider to the session. This can also be used to change subscription parameters.
+func (s *Session) AddProvider(providerGUID windows.GUID, options...ProviderOption) error {
+	defaultConfig := ProviderOptions{
 		Level: TRACE_LEVEL_VERBOSE,
 	}
 	for _, opt := range options {
 		opt(&defaultConfig)
 	}
-	s := Session{
-		guids:   providerGUIDs,
-		config: defaultConfig,
-	}
 
-	utf16Name, err := windows.UTF16FromString(s.config.Name)
-	if err != nil {
-		return nil, fmt.Errorf("incorrect session name; %w", err) // unlikely
+	if err := s.subscribeToProvider(providerGUID, defaultConfig); err != nil {
+		return fmt.Errorf("failed to subscribe to provider; %w", err)
 	}
-	s.etwSessionName = utf16Name
-
-	if err := s.createETWSession(); err != nil {
-		return nil, fmt.Errorf("failed to create session; %w", err)
-	}
-	// TODO: consider setting a finalizer with .Close
-
-	return &s, nil
+	s.guids = append(s.guids, providerGUID)
+	return nil
 }
 
 // Process starts processing of ETW events. Events will be passed to @cb
@@ -141,10 +128,6 @@ func NewMultipleSession(providerGUIDs []windows.GUID, options ...Option) (*Sessi
 // N.B. Process blocks until `.Close` being called!
 func (s *Session) Process(cb EventCallback) error {
 	s.callback = cb
-
-	if err := s.subscribeToProvider(); err != nil {
-		return fmt.Errorf("failed to subscribe to provider; %w", err)
-	}
 
 	cgoKey := newCallbackKey(s)
 	defer freeCallbackKey(cgoKey)
@@ -156,24 +139,11 @@ func (s *Session) Process(cb EventCallback) error {
 	return nil
 }
 
-// UpdateOptions changes subscription parameters in runtime. The only option
-// that can't be updated is session name. To change session name -- stop and
-// recreate a session with new desired name.
-func (s *Session) UpdateOptions(options ...Option) error {
-	for _, opt := range options {
-		opt(&s.config)
-	}
-	if err := s.subscribeToProvider(); err != nil {
-		return err
-	}
-	return nil
-}
-
 // Close stops trace session and frees associated resources.
 func (s *Session) Close() error {
 	// "Be sure to disable all providers before stopping the session."
 	// https://docs.microsoft.com/en-us/windows/win32/etw/configuring-and-starting-an-event-tracing-session
-	if err := s.unsubscribeFromProvider(); err != nil {
+	if err := s.unsubscribeFromProviders(); err != nil {
 		s.stopSession()
 		return fmt.Errorf("failed to disable provider; %w", err)
 	}
@@ -276,51 +246,46 @@ func (s *Session) createETWSession() error {
 }
 
 // subscribeToProvider wraps EnableTraceEx2 with EVENT_CONTROL_CODE_ENABLE_PROVIDER.
-func (s *Session) subscribeToProvider() error {
+func (s *Session) subscribeToProvider(provider windows.GUID, options ProviderOptions) error {
 	// https://docs.microsoft.com/en-us/windows/win32/etw/configuring-and-starting-an-event-tracing-session
 	params := C.ENABLE_TRACE_PARAMETERS{
 		Version: 2, // ENABLE_TRACE_PARAMETERS_VERSION_2
 	}
-	for _, p := range s.config.EnableProperties {
+	for _, p := range options.EnableProperties {
 		params.EnableProperty |= C.ULONG(p)
 	}
 
-	var lastError error
+	// ULONG WMIAPI EnableTraceEx2(
+	//	TRACEHANDLE              TraceHandle,
+	//	LPCGUID                  ProviderId,
+	//	ULONG                    ControlCode,
+	//	UCHAR                    Level,
+	//	ULONGLONG                MatchAnyKeyword,
+	//	ULONGLONG                MatchAllKeyword,
+	//	ULONG                    Timeout,
+	//	PENABLE_TRACE_PARAMETERS EnableParameters
+	// );
+	//
+	// Ref: https://docs.microsoft.com/en-us/windows/win32/api/evntrace/nf-evntrace-enabletraceex2
+	ret := C.EnableTraceEx2(
+		s.hSession,
+		(*C.GUID)(unsafe.Pointer(&provider)),
+		C.EVENT_CONTROL_CODE_ENABLE_PROVIDER,
+		C.UCHAR(options.Level),
+		C.ULONGLONG(options.MatchAnyKeyword),
+		C.ULONGLONG(options.MatchAllKeyword),
+		0,       // Timeout set to zero to enable the trace asynchronously
+		&params, //nolint:gocritic // TODO: dupSubExpr?? gocritic bug?
+	)
 
-	for _, guid := range s.guids {
-
-		// ULONG WMIAPI EnableTraceEx2(
-		//	TRACEHANDLE              TraceHandle,
-		//	LPCGUID                  ProviderId,
-		//	ULONG                    ControlCode,
-		//	UCHAR                    Level,
-		//	ULONGLONG                MatchAnyKeyword,
-		//	ULONGLONG                MatchAllKeyword,
-		//	ULONG                    Timeout,
-		//	PENABLE_TRACE_PARAMETERS EnableParameters
-		// );
-		//
-		// Ref: https://docs.microsoft.com/en-us/windows/win32/api/evntrace/nf-evntrace-enabletraceex2
-		ret := C.EnableTraceEx2(
-			s.hSession,
-			(*C.GUID)(unsafe.Pointer(&guid)),
-			C.EVENT_CONTROL_CODE_ENABLE_PROVIDER,
-			C.UCHAR(s.config.Level),
-			C.ULONGLONG(s.config.MatchAnyKeyword),
-			C.ULONGLONG(s.config.MatchAllKeyword),
-			0,       // Timeout set to zero to enable the trace asynchronously
-			&params, //nolint:gocritic // TODO: dupSubExpr?? gocritic bug?
-		)
-
-		if status := windows.Errno(ret); status != windows.ERROR_SUCCESS {
-			lastError = fmt.Errorf("EVENT_CONTROL_CODE_ENABLE_PROVIDER failed for GUID %s; %w", guid, status)
-		}
+	if status := windows.Errno(ret); status != windows.ERROR_SUCCESS {
+		return fmt.Errorf("EVENT_CONTROL_CODE_ENABLE_PROVIDER failed for GUID %s; %w", provider, status)
 	}
-	return lastError
+	return nil
 }
 
-// unsubscribeFromProvider wraps EnableTraceEx2 with EVENT_CONTROL_CODE_DISABLE_PROVIDER.
-func (s *Session) unsubscribeFromProvider() error {
+// unsubscribeFromProviders wraps EnableTraceEx2 with EVENT_CONTROL_CODE_DISABLE_PROVIDER.
+func (s *Session) unsubscribeFromProviders() error {
 	var lastError error
 	for _, guid := range s.guids {
 		// ULONG WMIAPI EnableTraceEx2(

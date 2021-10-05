@@ -16,7 +16,25 @@ type SessionOptions struct {
 	// could be controlled from other processed by it's name, so it should be
 	// unique.
 	Name string
+}
 
+// SessionOption is any function that modifies SessionOptions. Options will be called
+// on default config in NewSession. Subsequent options that modifies same
+// fields will override each other.
+type SessionOption func(cfg *SessionOptions)
+
+// WithName specifies a provided @name for the creating session. Further that
+// session could be controlled from other processed by it's name, so it should be
+// unique.
+func WithName(name string) SessionOption {
+       return func(cfg *SessionOptions) {
+               cfg.Name = name
+       }
+}
+
+// ProviderOptions describes subscription options for a single provider.
+//
+type ProviderOptions struct {
 	// Level represents provider-defined value that specifies the level of
 	// detail included in the event. Higher levels imply that you get lower
 	// levels as well. For example, with TRACE_LEVEL_ERROR you'll get all
@@ -57,25 +75,16 @@ type SessionOptions struct {
 	EnableProperties []EnableProperty
 }
 
-// Option is any function that modifies SessionOptions. Options will be called
+// ProviderOption is any function that modifies ProviderOptions. Options will be called
 // on default config in NewSession. Subsequent options that modifies same
 // fields will override each other.
-type Option func(cfg *SessionOptions)
-
-// WithName specifies a provided @name for the creating session. Further that
-// session could be controlled from other processed by it's name, so it should be
-// unique.
-func WithName(name string) Option {
-	return func(cfg *SessionOptions) {
-		cfg.Name = name
-	}
-}
+type ProviderOption func(cfg *ProviderOptions)
 
 // WithLevel specifies a maximum level consumer is interested in. Higher levels
 // imply that you get lower levels as well. For example, with TRACE_LEVEL_ERROR
 // you'll get all events except ones with level critical.
-func WithLevel(lvl TraceLevel) Option {
-	return func(cfg *SessionOptions) {
+func WithLevel(lvl TraceLevel) ProviderOption {
+	return func(cfg *ProviderOptions) {
 		cfg.Level = lvl
 	}
 }
@@ -87,11 +96,11 @@ func WithLevel(lvl TraceLevel) Option {
 // A session will receive only those events whose keywords masks has ANY of
 // @anyKeyword and ALL of @allKeyword bits sets.
 //
-// For more info take a look a SessionOptions docs. To query keywords defined
+// For more info take a look a ProviderOptions docs. To query keywords defined
 // by specific provider identified by <GUID> try:
 //     logman query providers <GUID>
-func WithMatchKeywords(anyKeyword, allKeyword uint64) Option {
-	return func(cfg *SessionOptions) {
+func WithMatchKeywords(anyKeyword, allKeyword uint64) ProviderOption {
+	return func(cfg *ProviderOptions) {
 		cfg.MatchAnyKeyword = anyKeyword
 		cfg.MatchAllKeyword = allKeyword
 	}
@@ -103,8 +112,8 @@ func WithMatchKeywords(anyKeyword, allKeyword uint64) Option {
 // For more info about available properties check EnableProperty doc and
 // original API reference:
 // https://docs.microsoft.com/en-us/windows/win32/api/evntrace/ns-evntrace-enable_trace_parameters
-func WithProperty(p EnableProperty) Option {
-	return func(cfg *SessionOptions) {
+func WithProperty(p EnableProperty) ProviderOption {
+	return func(cfg *ProviderOptions) {
 		cfg.EnableProperties = append(cfg.EnableProperties, p)
 	}
 }

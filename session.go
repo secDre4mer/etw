@@ -98,7 +98,7 @@ func NewSession(options ...SessionOption) (*Session, error) {
 	s.etwSessionName = utf16Name
 
 	if err := s.createETWSession(); err != nil {
-		return nil, fmt.Errorf("failed to create session; %w", err)
+		return nil, err
 	}
 	// TODO: consider setting a finalizer with .Close
 

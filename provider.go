@@ -10,20 +10,14 @@ import (
 )
 
 /*
+// MinGW headers are always restricted to the lowest possible Windows version,
+// so specify Win7+ manually.
+#undef _WIN32_WINNT
+#define _WIN32_WINNT _WIN32_WINNT_WIN7
+
 #include <windows.h>
-
-typedef struct _TRACE_PROVIDER_INFO {
-  GUID  ProviderGuid;
-  ULONG SchemaSource;
-  ULONG ProviderNameOffset;
-} TRACE_PROVIDER_INFO;
-
-typedef struct _PROVIDER_ENUMERATION_INFO {
-  ULONG               NumberOfProviders;
-  ULONG               Reserved;
-  TRACE_PROVIDER_INFO TraceProviderInfoArray[ANYSIZE_ARRAY];
-} PROVIDER_ENUMERATION_INFO;
- */
+#include <tdh.h>
+*/
 import "C"
 
 var (

@@ -53,8 +53,10 @@ func (s *sessionSuite) TestSmoke() {
 	go s.generateEvents(s.ctx, []msetw.Level{msetw.LevelInfo})
 
 	// Ensure we can subscribe to our in-house ETW provider.
-	session, err := etw.NewSession(s.guid)
+	session, err := etw.NewSession()
 	s.Require().NoError(err, "Failed to create session")
+	err = session.AddProvider(s.guid)
+	s.Require().NoError(err, "Failed to add provider")
 
 	// The only thing we are going to do is signal that we've got something.
 	gotEvent := make(chan struct{})
@@ -86,8 +88,10 @@ func (s *sessionSuite) TestUpdating() {
 	go s.generateEvents(s.ctx, []msetw.Level{msetw.LevelInfo, msetw.LevelCritical})
 
 	// Then subscribe for CRITICAL only.
-	session, err := etw.NewSession(s.guid, etw.WithLevel(etw.TRACE_LEVEL_CRITICAL))
+	session, err := etw.NewSession()
 	s.Require().NoError(err, "Failed to create session")
+	err = session.AddProvider(s.guid, etw.WithLevel(etw.TRACE_LEVEL_CRITICAL))
+	s.Require().NoError(err, "Failed to add provider")
 
 	// Callback will signal about seen event level through corresponding channels.
 	var (
@@ -118,7 +122,7 @@ func (s *sessionSuite) TestUpdating() {
 
 	// Now bump the subscription option with new event level.
 	// (We could actually update any updatable option, level is just the most obvious.)
-	err = session.UpdateOptions(etw.WithLevel(etw.TRACE_LEVEL_INFORMATION))
+	err = session.AddProvider(s.guid, etw.WithLevel(etw.TRACE_LEVEL_INFORMATION))
 	s.Require().NoError(err, "Failed to update session options")
 
 	// If the options update was successfully applied we should catch event with INFO level too.
@@ -166,8 +170,10 @@ func (s *sessionSuite) TestParsing() {
 		"anotherArray":       []interface{}{"3", "4"},
 	}
 
-	session, err := etw.NewSession(s.guid, etw.WithLevel(etw.TRACE_LEVEL_VERBOSE))
+	session, err := etw.NewSession()
 	s.Require().NoError(err, "Failed to create a session")
+	err = session.AddProvider(s.guid, etw.WithLevel(etw.TRACE_LEVEL_VERBOSE))
+	s.Require().NoError(err, "Failed to add provider")
 
 	var (
 		properties map[string]interface{}
@@ -198,11 +204,11 @@ func (s *sessionSuite) TestKillSession() {
 	sessionName := fmt.Sprintf("go-etw-suicide-%d", time.Now().UnixNano())
 
 	// Ensure we can create a session with a given name.
-	_, err := etw.NewSession(s.guid, etw.WithName(sessionName))
+	_, err := etw.NewSession(etw.WithName(sessionName))
 	s.Require().NoError(err, "Failed to create session with name %s", sessionName)
 
 	// Ensure we've got ExistsError creating a session with the same name.
-	_, err = etw.NewSession(s.guid, etw.WithName(sessionName))
+	_, err = etw.NewSession(etw.WithName(sessionName))
 	s.Require().Error(err)
 
 	var exists etw.ExistsError
@@ -213,7 +219,7 @@ func (s *sessionSuite) TestKillSession() {
 	s.Require().NoError(etw.KillSession(sessionName), "Failed to force stop session")
 
 	// Ensure that fresh session could normally started and stopped.
-	session, err := etw.NewSession(s.guid, etw.WithName(sessionName))
+	session, err := etw.NewSession(etw.WithName(sessionName))
 	s.Require().NoError(err, "Failed to create session after a successful kill")
 	s.Require().NoError(session.Close(), "Failed to close session properly")
 }
@@ -223,8 +229,10 @@ func (s *sessionSuite) TestEventOutsideCallback() {
 	const deadline = 10 * time.Second
 	go s.generateEvents(s.ctx, []msetw.Level{msetw.LevelInfo})
 
-	session, err := etw.NewSession(s.guid)
+	session, err := etw.NewSession()
 	s.Require().NoError(err, "Failed to create session")
+	err = session.AddProvider(s.guid)
+	s.Require().NoError(err, "Failed to add provider")
 
 	// Grab event pointer from the callback. We expect that outdated pointer
 	// will protect user from calling Windows API on freed memory.
@@ -271,7 +279,7 @@ func (s sessionSuite) waitForSignal(done <-chan struct{}, deadline time.Duration
 	case <-done:
 		// pass.
 	case <-time.After(deadline):
-		s.Fail(failMsg, "deadline %s exceeded", deadline)
+		s.FailNow(failMsg, "deadline %s exceeded", deadline)
 	}
 }
 

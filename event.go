@@ -24,6 +24,7 @@ import (
 type Event struct {
 	Header      EventHeader
 	eventRecord C.PEVENT_RECORD
+	ignoreMapInfo bool
 }
 
 // EventHeader contains an information that is common for every ETW event
@@ -104,7 +105,7 @@ func (e *Event) EventProperties() (map[string]interface{}, error) {
 		}, nil
 	}
 
-	p, err := newPropertyParser(e.eventRecord)
+	p, err := newPropertyParser(e.eventRecord, e.ignoreMapInfo)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse event properties; %w", err)
 	}
@@ -253,9 +254,10 @@ type propertyParser struct {
 	data    uintptr
 	endData uintptr
 	ptrSize uintptr
+	ignoreMapInfo bool
 }
 
-func newPropertyParser(r C.PEVENT_RECORD) (*propertyParser, error) {
+func newPropertyParser(r C.PEVENT_RECORD, ignoreMapInfo bool) (*propertyParser, error) {
 	info, err := getEventInformation(r)
 	if err != nil {
 		if info != nil {
@@ -273,6 +275,7 @@ func newPropertyParser(r C.PEVENT_RECORD) (*propertyParser, error) {
 		ptrSize: ptrSize,
 		data:    uintptr(r.UserData),
 		endData: uintptr(r.UserData) + uintptr(r.UserDataLength),
+		ignoreMapInfo: ignoreMapInfo,
 	}, nil
 }
 
@@ -385,9 +388,13 @@ var (
 // parseSimpleType wraps TdhFormatProperty to get rendered to string value of
 // @i-th event property.
 func (p *propertyParser) parseSimpleType(i int) (string, error) {
-	mapInfo, err := getMapInfo(p.record, p.info, i)
-	if err != nil {
-		return "", fmt.Errorf("failed to get map info; %w", err)
+	var mapInfo unsafe.Pointer
+	if !p.ignoreMapInfo {
+		var err error
+		mapInfo, err = getMapInfo(p.record, p.info, i)
+		if err != nil {
+			return "", fmt.Errorf("failed to get map info; %w", err)
+		}
 	}
 
 	var propertyLength C.uint
@@ -441,11 +448,6 @@ retryLoop:
 			fallthrough // Can't fix. Error.
 
 		default:
-			if status == windows.ERROR_EVT_INVALID_EVENT_DATA && mapInfo != nil {
-				// Can happen if the MapInfo doesn't match the actual data. Removing it allows us to access at least the non-interpreted data.
-				mapInfo = nil
-				continue
-			}
 			return "", fmt.Errorf("TdhFormatProperty failed; %w", status)
 		}
 	}

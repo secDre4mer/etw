@@ -425,11 +425,13 @@ func handleEvent(eventRecord C.PEVENT_RECORD) {
 		return
 	}
 
+	session := targetSession.(*Session)
 	evt := &Event{
 		Header:      eventHeaderToGo(eventRecord.EventHeader),
 		eventRecord: eventRecord,
+		ignoreMapInfo: session.config.IgnoreMapInfo,
 	}
-	targetSession.(*Session).callback(evt)
+	session.callback(evt)
 	evt.eventRecord = nil
 }
 

@@ -16,6 +16,11 @@ type SessionOptions struct {
 	// could be controlled from other processed by it's name, so it should be
 	// unique.
 	Name string
+
+	// Ignore any event map information that might have to be parsed from the provider manifest.
+	// This can speed up event formatting considerably, but enums or bit maps will no longer
+	// be formatted.
+	IgnoreMapInfo bool
 }
 
 // SessionOption is any function that modifies SessionOptions. Options will be called
@@ -27,9 +32,17 @@ type SessionOption func(cfg *SessionOptions)
 // session could be controlled from other processed by it's name, so it should be
 // unique.
 func WithName(name string) SessionOption {
-       return func(cfg *SessionOptions) {
-               cfg.Name = name
-       }
+	return func(cfg *SessionOptions) {
+		cfg.Name = name
+	}
+}
+
+// IgnoreMapInfo specifies whether event map information should be processed.
+// SessionOptions.IgnoreMapInfo has further information on this.
+func IgnoreMapInfo(ignoreMapInfo bool) SessionOption {
+	return func(cfg *SessionOptions) {
+		cfg.IgnoreMapInfo = ignoreMapInfo
+	}
 }
 
 // ProviderOptions describes subscription options for a single provider.

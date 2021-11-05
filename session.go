@@ -27,6 +27,13 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+var (
+	advapi32 = windows.NewLazySystemDLL("advapi32.dll")
+
+	traceSetInformation   = advapi32.NewProc("TraceSetInformation")
+	traceQueryInformation = advapi32.NewProc("TraceQueryInformation")
+)
+
 // ExistsError is returned by NewSession if the session name is already taken.
 //
 // Having ExistsError you have an option to force kill the session:
@@ -51,7 +58,7 @@ func (e ExistsError) Error() string {
 // Session should be closed via `.Close` call to free obtained OS resources
 // even if `.Process` has never been called.
 type Session struct {
-	guids     []windows.GUID
+	guids    []windows.GUID
 	config   SessionOptions
 	callback EventCallback
 
@@ -73,6 +80,31 @@ type Session struct {
 // separately.
 type EventCallback func(e *Event)
 
+func NewKernelSession(flags ...EnableFlag) (*Session, error) {
+	config := SessionOptions{
+		Name: C.KERNEL_LOGGER_NAME,
+	}
+	s := Session{
+		config: config,
+	}
+
+	utf16Name, err := windows.UTF16FromString(s.config.Name)
+	if err != nil {
+		return nil, fmt.Errorf("incorrect session name; %w", err) // unlikely
+	}
+	s.etwSessionName = utf16Name
+
+	if err := s.createETWSession(); err != nil {
+		return nil, fmt.Errorf("failed to create session; %w", err)
+	}
+	if err := s.setEnableFlags(flags...); err != nil {
+		s.Close()
+		return nil, fmt.Errorf("failed to set flags; %w", err)
+	}
+
+	return &s, nil
+}
+
 // NewSession creates a Windows event tracing session instance. Session with no
 // options provided is a usable session, but it could be a bit noisy. It's
 // recommended to refine the session with level and match keywords options
@@ -82,7 +114,7 @@ type EventCallback func(e *Event)
 // otherwise it will leak in OS internals until system reboot.
 func NewSession(options ...SessionOption) (*Session, error) {
 	defaultConfig := SessionOptions{
-		Name:  "go-etw-" + randomName(),
+		Name: "go-etw-" + randomName(),
 	}
 	for _, opt := range options {
 		opt(&defaultConfig)
@@ -106,7 +138,7 @@ func NewSession(options ...SessionOption) (*Session, error) {
 }
 
 // AddProvider adds a provider to the session. This can also be used to change subscription parameters.
-func (s *Session) AddProvider(providerGUID windows.GUID, options...ProviderOption) error {
+func (s *Session) AddProvider(providerGUID windows.GUID, options ...ProviderOption) error {
 	defaultConfig := ProviderOptions{
 		Level: TRACE_LEVEL_VERBOSE,
 	}
@@ -205,7 +237,7 @@ func KillSession(name string) error {
 }
 
 // createETWSession wraps StartTraceW.
-func (s *Session) createETWSession() error {
+func (s *Session) createETWSession(flags ...EnableFlag) error {
 	// We need to allocate a sequential buffer for a structure and a session name
 	// which will be placed there by an API call (for the future calls).
 	//
@@ -239,11 +271,52 @@ func (s *Session) createETWSession() error {
 		return ExistsError{SessionName: s.config.Name}
 	case windows.ERROR_SUCCESS:
 		s.propertiesBuf = propertiesBuf
-		return nil
 	default:
 		return fmt.Errorf("StartTraceW failed; %w", err)
 	}
+	return nil
 }
+
+func (s *Session) setEnableFlags(flags ...EnableFlag) error {
+	if len(flags) == 0 {
+		return nil
+	}
+	if err := traceSetInformation.Find(); err != nil {
+		return fmt.Errorf("TraceSetInformation is only supported on Windows 8+")
+	}
+	if err := traceSetInformation.Find(); err != nil {
+		return fmt.Errorf("TraceQueryInformation is only supported on Windows 8+")
+	}
+	var masks perfinfoGroupmask
+	ret, _, _ := traceQueryInformation.Call(
+		uintptr(s.hSession),
+		uintptr(C.TraceSystemTraceEnableFlagsInfo),
+		uintptr(unsafe.Pointer(&masks)),
+		unsafe.Sizeof(masks),
+		0,
+	)
+	if err := windows.Errno(ret); err != windows.ERROR_SUCCESS {
+		return fmt.Errorf("TraceQueryInformation failed; %w", err)
+	}
+	var enableFlag C.ULONG
+	for _, flag := range flags {
+		enableFlag |= C.ULONG(flag)
+	}
+	masks[4] = enableFlag
+
+	ret, _, _ = traceSetInformation.Call(
+		uintptr(s.hSession),
+		uintptr(C.TraceSystemTraceEnableFlagsInfo),
+		uintptr(unsafe.Pointer(&masks)),
+		unsafe.Sizeof(masks),
+	)
+	if err := windows.Errno(ret); err != windows.ERROR_SUCCESS {
+		return fmt.Errorf("TraceSetInformation failed; %w", err)
+	}
+	return nil
+}
+
+type perfinfoGroupmask [8]C.ULONG
 
 // subscribeToProvider wraps EnableTraceEx2 with EVENT_CONTROL_CODE_ENABLE_PROVIDER.
 func (s *Session) subscribeToProvider(provider windows.GUID, options ProviderOptions) error {
@@ -427,8 +500,8 @@ func handleEvent(eventRecord C.PEVENT_RECORD) {
 
 	session := targetSession.(*Session)
 	evt := &Event{
-		Header:      eventHeaderToGo(eventRecord.EventHeader),
-		eventRecord: eventRecord,
+		Header:        eventHeaderToGo(eventRecord.EventHeader),
+		eventRecord:   eventRecord,
 		ignoreMapInfo: session.config.IgnoreMapInfo,
 	}
 	session.callback(evt)

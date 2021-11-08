@@ -224,6 +224,15 @@ func (s *sessionSuite) TestKillSession() {
 	s.Require().NoError(session.Close(), "Failed to close session properly")
 }
 
+// TestStat ensures that we are able to query information about a session.
+func (s *sessionSuite) TestStat() {
+	session, err := etw.NewSession()
+	s.Require().NoError(err, "Failed to create session")
+
+	_, err = session.Stat()
+	s.Require().NoError(err, "Failed to stat session")
+}
+
 // TestEventOutsideCallback ensures *etw.Event can't be used outside EventCallback.
 func (s *sessionSuite) TestEventOutsideCallback() {
 	const deadline = 10 * time.Second

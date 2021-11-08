@@ -65,6 +65,8 @@ type Session struct {
 	etwSessionName []uint16
 	hSession       C.TRACEHANDLE
 	propertiesBuf  []byte
+
+	processedEvents uint64
 }
 
 // EventCallback is any function that could handle an ETW event. EventCallback
@@ -169,6 +171,23 @@ func (s *Session) Process(cb EventCallback) error {
 		return fmt.Errorf("error processing events; %w", err)
 	}
 	return nil
+}
+
+type SessionStatistics struct {
+	LostEvents      uint64
+	ProcessedEvents uint64
+}
+
+// Stat queries runtime information about the session.
+func (s *Session) Stat() (SessionStatistics, error) {
+	sessionProperties, err := s.querySessionDetails()
+	if err != nil {
+		return SessionStatistics{}, fmt.Errorf("could not query session details: %w", err)
+	}
+	return SessionStatistics{
+		LostEvents:      uint64(sessionProperties.EventsLost),
+		ProcessedEvents: s.processedEvents,
+	}, nil
 }
 
 // Close stops trace session and frees associated resources.
@@ -447,6 +466,42 @@ func (s *Session) stopSession() error {
 	}
 }
 
+// stopSession wraps ControlTraceW with EVENT_TRACE_CONTROL_STOP.
+func (s *Session) querySessionDetails() (*C.EVENT_TRACE_PROPERTIES, error) {
+	// Allocate a buffer for EVENT_TRACE_PROPERTIES and up to 2 names with up to 1024 chars behind it
+	bufSize := int(unsafe.Sizeof(C.EVENT_TRACE_PROPERTIES{}) + 2*1024)
+	propertiesBuf := make([]byte, bufSize)
+
+	// We will use Query Performance Counter for timestamp cos it gives us higher
+	// time resolution. Event timestamps however would be converted to the common
+	// FileTime due to absence of PROCESS_TRACE_MODE_RAW_TIMESTAMP in LogFileMode.
+	//
+	// Ref: https://docs.microsoft.com/en-us/windows/win32/api/evntrace/ns-evntrace-event_trace_properties
+	pProperties := (C.PEVENT_TRACE_PROPERTIES)(unsafe.Pointer(&propertiesBuf[0]))
+	pProperties.Wnode.BufferSize = C.ulong(bufSize)
+	pProperties.LoggerNameOffset = C.ulong(unsafe.Sizeof(C.EVENT_TRACE_PROPERTIES{}))
+	pProperties.LogFileNameOffset = C.ulong(unsafe.Sizeof(C.EVENT_TRACE_PROPERTIES{}) + 1024)
+
+	// ULONG WMIAPI ControlTraceW(
+	//  TRACEHANDLE             TraceHandle,
+	//  LPCWSTR                 InstanceName,
+	//  PEVENT_TRACE_PROPERTIES Properties,
+	//  ULONG                   ControlCode
+	// );
+	ret := C.ControlTraceW(
+		s.hSession,
+		nil,
+		(C.PEVENT_TRACE_PROPERTIES)(unsafe.Pointer(&s.propertiesBuf[0])),
+		C.EVENT_TRACE_CONTROL_QUERY)
+
+	switch status := windows.Errno(ret); status {
+	case windows.ERROR_SUCCESS:
+		return pProperties, nil
+	default:
+		return nil, status
+	}
+}
+
 func randomName() string {
 	if g, err := windows.GenerateGUID(); err == nil {
 		return g.String()
@@ -505,6 +560,7 @@ func handleEvent(eventRecord C.PEVENT_RECORD) {
 		ignoreMapInfo: session.config.IgnoreMapInfo,
 	}
 	session.callback(evt)
+	session.processedEvents++
 	evt.eventRecord = nil
 }
 

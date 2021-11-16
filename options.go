@@ -60,14 +60,14 @@ func IgnoreMapInfo(ignoreMapInfo bool) SessionOption {
 // session. This option is ignored for non-kernel sessions.
 func EnableFlags(flags ...EnableFlag) SessionOption {
 	return func(cfg *SessionOptions) {
-		cfg.Flags = append(cfg.Flags, flags)
+		cfg.Flags = append(cfg.Flags, flags...)
 	}
 }
 
 // EnableLogModes sets flags that specify properties of the session.
 func EnableLogModes(modes ...LogFileMode) SessionOption {
 	return func(cfg *SessionOptions) {
-		cfg.LogFileModes = append(cfg.LogFileModes, modes)
+		cfg.LogFileModes = append(cfg.LogFileModes, modes...)
 	}
 }
 

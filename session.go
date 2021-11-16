@@ -100,12 +100,6 @@ func NewSession(options ...SessionOption) (*Session, error) {
 		config: defaultConfig,
 	}
 
-	utf16Name, err := windows.UTF16FromString(s.config.Name)
-	if err != nil {
-		return nil, fmt.Errorf("incorrect session name; %w", err) // unlikely
-	}
-	s.etwSessionName = utf16Name
-
 	if err := s.createETWSession(); err != nil {
 		return nil, err
 	}
@@ -116,6 +110,17 @@ func NewSession(options ...SessionOption) (*Session, error) {
 		return nil, fmt.Errorf("failed to set flags; %w", err)
 	}
 	return &s, nil
+}
+
+// Update updates the session options with the new options.
+// It is not possible to update the name of a session.
+// Changing log file modes may also fail.
+func (s *Session) Update(options ...SessionOption) error {
+	var newConfig SessionOptions
+	for _, opt := range options {
+		opt(&newConfig)
+	}
+	return s.updateSessionProperties(newConfig)
 }
 
 // AddProvider adds a provider to the session. This can also be used to change subscription parameters.
@@ -234,15 +239,10 @@ func KillSession(name string) error {
 	}
 }
 
-// createETWSession wraps StartTraceW.
-func (s *Session) createETWSession() error {
+func (s *Session) generateTraceProperties(config SessionOptions) []byte {
 	var logFileMode C.ULONG
-	for _, mode := range s.config.LogFileModes {
-		if mode == EVENT_TRACE_SYSTEM_LOGGER_MODE && getWindowsVersion() <= windows7 {
-			// We are on Windows 7 or older. These versions do not support EVENT_TRACE_SYSTEM_LOGGER_MODE
-			// and instead requires usage of the global kernel logger session.
-			s.etwSessionName, _ = windows.UTF16FromString(C.KERNEL_LOGGER_NAME)
-		} else {
+	for _, mode := range config.LogFileModes {
+		if !(mode == EVENT_TRACE_SYSTEM_LOGGER_MODE && getWindowsVersion() <= windows7) {
 			logFileMode |= C.ULONG(mode)
 		}
 	}
@@ -272,17 +272,35 @@ func (s *Session) createETWSession() error {
 	pProperties.LogFileMode = logFileMode
 
 	var enableFlags C.ULONG
-	for _, flag := range s.config.Flags {
+	for _, flag := range config.Flags {
 		if !traceSetInformationFlags[flag] {
 			enableFlags |= C.ULONG(flag)
 		}
 	}
 	pProperties.EnableFlags = enableFlags
+	return propertiesBuf
+}
+
+// createETWSession wraps StartTraceW.
+func (s *Session) createETWSession() error {
+	utf16Name, err := windows.UTF16FromString(s.config.Name)
+	if err != nil {
+		return fmt.Errorf("incorrect session name; %w", err) // unlikely
+	}
+	s.etwSessionName = utf16Name
+	for _, mode := range s.config.LogFileModes {
+		if mode == EVENT_TRACE_SYSTEM_LOGGER_MODE && getWindowsVersion() <= windows7 {
+			// We are on Windows 7 or older. These versions do not support EVENT_TRACE_SYSTEM_LOGGER_MODE
+			// and instead requires usage of the global kernel logger session.
+			s.etwSessionName, _ = windows.UTF16FromString(C.KERNEL_LOGGER_NAME)
+		}
+	}
+	propertiesBuf := s.generateTraceProperties(s.config)
 
 	ret := C.StartTraceW(
 		&s.hSession,
 		C.LPWSTR(unsafe.Pointer(&s.etwSessionName[0])),
-		pProperties,
+		C.PEVENT_TRACE_PROPERTIES(unsafe.Pointer(&propertiesBuf[0])),
 	)
 	switch err := windows.Errno(ret); err {
 	case windows.ERROR_ALREADY_EXISTS:
@@ -337,6 +355,25 @@ func (s *Session) setEnableFlags(flags ...EnableFlag) error {
 }
 
 type perfinfoGroupmask [8]C.ULONG
+
+func (s *Session) updateSessionProperties(config SessionOptions) error {
+	propertiesBuf := s.generateTraceProperties(config)
+
+	ret := C.ControlTraceW(
+		s.hSession,
+		C.LPWSTR(unsafe.Pointer(&s.etwSessionName[0])),
+		C.PEVENT_TRACE_PROPERTIES(unsafe.Pointer(&propertiesBuf[0])),
+		C.EVENT_TRACE_CONTROL_UPDATE,
+	)
+	switch err := windows.Errno(ret); err {
+	case windows.ERROR_SUCCESS:
+		s.propertiesBuf = propertiesBuf
+		s.config = config
+	default:
+		return fmt.Errorf("ControlTraceW failed; %w", err)
+	}
+	return nil
+}
 
 // subscribeToProvider wraps EnableTraceEx2 with EVENT_CONTROL_CODE_ENABLE_PROVIDER.
 func (s *Session) subscribeToProvider(provider windows.GUID, options ProviderOptions) error {

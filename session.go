@@ -82,31 +82,6 @@ type Session struct {
 // separately.
 type EventCallback func(e *Event)
 
-func NewKernelSession(flags ...EnableFlag) (*Session, error) {
-	config := SessionOptions{
-		Name: C.KERNEL_LOGGER_NAME,
-	}
-	s := Session{
-		config: config,
-	}
-
-	utf16Name, err := windows.UTF16FromString(s.config.Name)
-	if err != nil {
-		return nil, fmt.Errorf("incorrect session name; %w", err) // unlikely
-	}
-	s.etwSessionName = utf16Name
-
-	if err := s.createETWSession(); err != nil {
-		return nil, fmt.Errorf("failed to create session; %w", err)
-	}
-	if err := s.setEnableFlags(flags...); err != nil {
-		s.Close()
-		return nil, fmt.Errorf("failed to set flags; %w", err)
-	}
-
-	return &s, nil
-}
-
 // NewSession creates a Windows event tracing session instance. Session with no
 // options provided is a usable session, but it could be a bit noisy. It's
 // recommended to refine the session with level and match keywords options
@@ -136,6 +111,10 @@ func NewSession(options ...SessionOption) (*Session, error) {
 	}
 	// TODO: consider setting a finalizer with .Close
 
+	if err := s.setEnableFlags(); err != nil {
+		s.Close()
+		return nil, fmt.Errorf("failed to set flags; %w", err)
+	}
 	return &s, nil
 }
 
@@ -256,7 +235,20 @@ func KillSession(name string) error {
 }
 
 // createETWSession wraps StartTraceW.
-func (s *Session) createETWSession(flags ...EnableFlag) error {
+func (s *Session) createETWSession() error {
+	var logFileMode C.ULONG
+	for _, mode := range s.config.LogFileModes {
+		if mode == EVENT_TRACE_SYSTEM_LOGGER_MODE && getWindowsVersion() <= windows7 {
+			// We are on Windows 7 or older. These versions do not support EVENT_TRACE_SYSTEM_LOGGER_MODE
+			// and instead requires usage of the global kernel logger session.
+			s.etwSessionName, _ = windows.UTF16FromString(C.KERNEL_LOGGER_NAME)
+		} else {
+			logFileMode |= C.ULONG(mode)
+		}
+	}
+	// Mark that we are going to process events in real time using a callback.
+	logFileMode |= C.EVENT_TRACE_REAL_TIME_MODE
+
 	// We need to allocate a sequential buffer for a structure and a session name
 	// which will be placed there by an API call (for the future calls).
 	//
@@ -277,8 +269,15 @@ func (s *Session) createETWSession(flags ...EnableFlag) error {
 	pProperties.Wnode.ClientContext = 1 // QPC for event Timestamp
 	pProperties.Wnode.Flags = C.WNODE_FLAG_TRACED_GUID
 
-	// Mark that we are going to process events in real time using a callback.
-	pProperties.LogFileMode = C.EVENT_TRACE_REAL_TIME_MODE
+	pProperties.LogFileMode = logFileMode
+
+	var enableFlags C.ULONG
+	for _, flag := range s.config.Flags {
+		if !traceSetInformationFlags[flag] {
+			enableFlags |= C.ULONG(flag)
+		}
+	}
+	pProperties.EnableFlags = enableFlags
 
 	ret := C.StartTraceW(
 		&s.hSession,
@@ -297,13 +296,19 @@ func (s *Session) createETWSession(flags ...EnableFlag) error {
 }
 
 func (s *Session) setEnableFlags(flags ...EnableFlag) error {
-	if len(flags) == 0 {
+	var enableFlag C.ULONG
+	for _, flag := range flags {
+		if traceSetInformationFlags[flag] {
+			enableFlag |= C.ULONG(flag)
+		}
+	}
+	if enableFlag == 0 {
 		return nil
 	}
 	if err := traceSetInformation.Find(); err != nil {
 		return fmt.Errorf("TraceSetInformation is only supported on Windows 8+")
 	}
-	if err := traceSetInformation.Find(); err != nil {
+	if err := traceQueryInformation.Find(); err != nil {
 		return fmt.Errorf("TraceQueryInformation is only supported on Windows 8+")
 	}
 	var masks perfinfoGroupmask
@@ -316,10 +321,6 @@ func (s *Session) setEnableFlags(flags ...EnableFlag) error {
 	)
 	if err := windows.Errno(ret); err != windows.ERROR_SUCCESS {
 		return fmt.Errorf("TraceQueryInformation failed; %w", err)
-	}
-	var enableFlag C.ULONG
-	for _, flag := range flags {
-		enableFlag |= C.ULONG(flag)
 	}
 	masks[4] = enableFlag
 

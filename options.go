@@ -26,7 +26,12 @@ type SessionOptions struct {
 	// be formatted.
 	IgnoreMapInfo bool
 
+	// Flags to enable on the session. This is only meaningful for a kernel session.
 	Flags []EnableFlag
+
+	LogFileModes []LogFileMode
+
+	Kernel bool
 }
 
 // SessionOption is any function that modifies SessionOptions. Options will be called
@@ -48,6 +53,21 @@ func WithName(name string) SessionOption {
 func IgnoreMapInfo(ignoreMapInfo bool) SessionOption {
 	return func(cfg *SessionOptions) {
 		cfg.IgnoreMapInfo = ignoreMapInfo
+	}
+}
+
+// EnableFlags enables specific flags that specify which events to receive from a kernel
+// session. This option is ignored for non-kernel sessions.
+func EnableFlags(flags ...EnableFlag) SessionOption {
+	return func(cfg *SessionOptions) {
+		cfg.Flags = append(cfg.Flags, flags)
+	}
+}
+
+// EnableLogModes sets flags that specify properties of the session.
+func EnableLogModes(modes ...LogFileMode) SessionOption {
+	return func(cfg *SessionOptions) {
+		cfg.LogFileModes = append(cfg.LogFileModes, modes)
 	}
 }
 
@@ -181,35 +201,53 @@ const (
 	EVENT_ENABLE_PROPERTY_EXCLUDE_INPRIVATE = EnableProperty(0x200)
 )
 
-
 type EnableFlag C.ULONG
 
 const (
-	EVENT_TRACE_FLAG_ALPC = EnableFlag(C.EVENT_TRACE_FLAG_ALPC)
-	EVENT_TRACE_FLAG_CSWITCH = EnableFlag(C.EVENT_TRACE_FLAG_CSWITCH)
-	EVENT_TRACE_FLAG_DBGPRINT = EnableFlag(C.EVENT_TRACE_FLAG_DBGPRINT)
-	EVENT_TRACE_FLAG_DISK_FILE_IO = EnableFlag(C.EVENT_TRACE_FLAG_DISK_FILE_IO)
-	EVENT_TRACE_FLAG_DISK_IO = EnableFlag(C.EVENT_TRACE_FLAG_DISK_IO)
-	EVENT_TRACE_FLAG_DISK_IO_INIT = EnableFlag(C.EVENT_TRACE_FLAG_DISK_IO_INIT)
-	EVENT_TRACE_FLAG_DISPATCHER = EnableFlag(C.EVENT_TRACE_FLAG_DISPATCHER)
-	EVENT_TRACE_FLAG_DPC = EnableFlag(C.EVENT_TRACE_FLAG_DPC)
-	EVENT_TRACE_FLAG_DRIVER = EnableFlag(C.EVENT_TRACE_FLAG_DRIVER)
-	EVENT_TRACE_FLAG_FILE_IO = EnableFlag(C.EVENT_TRACE_FLAG_FILE_IO)
-	EVENT_TRACE_FLAG_FILE_IO_INIT = EnableFlag(C.EVENT_TRACE_FLAG_FILE_IO_INIT)
-	EVENT_TRACE_FLAG_IMAGE_LOAD = EnableFlag(C.EVENT_TRACE_FLAG_IMAGE_LOAD)
-	EVENT_TRACE_FLAG_INTERRUPT = EnableFlag(C.EVENT_TRACE_FLAG_INTERRUPT)
-	EVENT_TRACE_FLAG_JOB = EnableFlag(0x00080000)
+	EVENT_TRACE_FLAG_ALPC               = EnableFlag(C.EVENT_TRACE_FLAG_ALPC)
+	EVENT_TRACE_FLAG_CSWITCH            = EnableFlag(C.EVENT_TRACE_FLAG_CSWITCH)
+	EVENT_TRACE_FLAG_DBGPRINT           = EnableFlag(C.EVENT_TRACE_FLAG_DBGPRINT)
+	EVENT_TRACE_FLAG_DISK_FILE_IO       = EnableFlag(C.EVENT_TRACE_FLAG_DISK_FILE_IO)
+	EVENT_TRACE_FLAG_DISK_IO            = EnableFlag(C.EVENT_TRACE_FLAG_DISK_IO)
+	EVENT_TRACE_FLAG_DISK_IO_INIT       = EnableFlag(C.EVENT_TRACE_FLAG_DISK_IO_INIT)
+	EVENT_TRACE_FLAG_DISPATCHER         = EnableFlag(C.EVENT_TRACE_FLAG_DISPATCHER)
+	EVENT_TRACE_FLAG_DPC                = EnableFlag(C.EVENT_TRACE_FLAG_DPC)
+	EVENT_TRACE_FLAG_DRIVER             = EnableFlag(C.EVENT_TRACE_FLAG_DRIVER)
+	EVENT_TRACE_FLAG_FILE_IO            = EnableFlag(C.EVENT_TRACE_FLAG_FILE_IO)
+	EVENT_TRACE_FLAG_FILE_IO_INIT       = EnableFlag(C.EVENT_TRACE_FLAG_FILE_IO_INIT)
+	EVENT_TRACE_FLAG_IMAGE_LOAD         = EnableFlag(C.EVENT_TRACE_FLAG_IMAGE_LOAD)
+	EVENT_TRACE_FLAG_INTERRUPT          = EnableFlag(C.EVENT_TRACE_FLAG_INTERRUPT)
+	EVENT_TRACE_FLAG_JOB                = EnableFlag(0x00080000)
 	EVENT_TRACE_FLAG_MEMORY_HARD_FAULTS = EnableFlag(C.EVENT_TRACE_FLAG_MEMORY_HARD_FAULTS)
 	EVENT_TRACE_FLAG_MEMORY_PAGE_FAULTS = EnableFlag(C.EVENT_TRACE_FLAG_MEMORY_PAGE_FAULTS)
-	EVENT_TRACE_FLAG_NETWORK_TCPIP = EnableFlag(C.EVENT_TRACE_FLAG_NETWORK_TCPIP)
-	EVENT_TRACE_FLAG_NO_SYSCONFIG = EnableFlag(C.EVENT_TRACE_FLAG_NO_SYSCONFIG)
-	EVENT_TRACE_FLAG_PROCESS = EnableFlag(C.EVENT_TRACE_FLAG_PROCESS)
-	EVENT_TRACE_FLAG_PROCESS_COUNTERS = EnableFlag(C.EVENT_TRACE_FLAG_PROCESS_COUNTERS)
-	EVENT_TRACE_FLAG_PROFILE = EnableFlag(C.EVENT_TRACE_FLAG_PROFILE)
-	EVENT_TRACE_FLAG_REGISTRY = EnableFlag(C.EVENT_TRACE_FLAG_REGISTRY)
-	EVENT_TRACE_FLAG_SPLIT_IO = EnableFlag(C.EVENT_TRACE_FLAG_SPLIT_IO)
-	EVENT_TRACE_FLAG_SYSTEMCALL = EnableFlag(C.EVENT_TRACE_FLAG_SYSTEMCALL)
-	EVENT_TRACE_FLAG_THREAD = EnableFlag(C.EVENT_TRACE_FLAG_THREAD)
-	EVENT_TRACE_FLAG_VAMAP = EnableFlag(C.EVENT_TRACE_FLAG_VAMAP)
-	EVENT_TRACE_FLAG_VIRTUAL_ALLOC = EnableFlag(C.EVENT_TRACE_FLAG_VIRTUAL_ALLOC)
+	EVENT_TRACE_FLAG_NETWORK_TCPIP      = EnableFlag(C.EVENT_TRACE_FLAG_NETWORK_TCPIP)
+	EVENT_TRACE_FLAG_NO_SYSCONFIG       = EnableFlag(C.EVENT_TRACE_FLAG_NO_SYSCONFIG)
+	EVENT_TRACE_FLAG_PROCESS            = EnableFlag(C.EVENT_TRACE_FLAG_PROCESS)
+	EVENT_TRACE_FLAG_PROCESS_COUNTERS   = EnableFlag(C.EVENT_TRACE_FLAG_PROCESS_COUNTERS)
+	EVENT_TRACE_FLAG_PROFILE            = EnableFlag(C.EVENT_TRACE_FLAG_PROFILE)
+	EVENT_TRACE_FLAG_REGISTRY           = EnableFlag(C.EVENT_TRACE_FLAG_REGISTRY)
+	EVENT_TRACE_FLAG_SPLIT_IO           = EnableFlag(C.EVENT_TRACE_FLAG_SPLIT_IO)
+	EVENT_TRACE_FLAG_SYSTEMCALL         = EnableFlag(C.EVENT_TRACE_FLAG_SYSTEMCALL)
+	EVENT_TRACE_FLAG_THREAD             = EnableFlag(C.EVENT_TRACE_FLAG_THREAD)
+	EVENT_TRACE_FLAG_VAMAP              = EnableFlag(C.EVENT_TRACE_FLAG_VAMAP)
+	EVENT_TRACE_FLAG_VIRTUAL_ALLOC      = EnableFlag(C.EVENT_TRACE_FLAG_VIRTUAL_ALLOC)
+
+	// Special flags that are undocument and must be set via TraceSetInformation
+	EVENT_TRACE_FLAG_OBTRACE EnableFlag = 0x80000040
+)
+
+var traceSetInformationFlags = map[EnableFlag]bool{
+	EVENT_TRACE_FLAG_OBTRACE: true,
+}
+
+type LogFileMode C.ULONG
+
+const (
+	// EVENT_TRACE_SECURE_MODE specifies that secure mode should be enabled on the session.
+	// This restricts who may log events to the session.
+	EVENT_TRACE_SECURE_MODE = LogFileMode(C.EVENT_TRACE_SECURE_MODE)
+
+	// EVENT_TRACE_SYSTEM_LOGGER_MODE specifies that the session will receive events from the
+	// SystemTraceProvider.
+	EVENT_TRACE_SYSTEM_LOGGER_MODE = LogFileMode(0x02000000)
 )

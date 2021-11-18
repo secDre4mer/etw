@@ -112,6 +112,13 @@ type ProviderOptions struct {
 	// original API reference:
 	// https://docs.microsoft.com/en-us/windows/win32/api/evntrace/ns-evntrace-enable_trace_parameters
 	EnableProperties []EnableProperty
+
+	// Filters defines a set of filters that limit the events which are sent by the provider.
+	// For a full list of possible filters, see here:
+	// https://docs.microsoft.com/en-us/windows/win32/api/evntprov/ns-evntprov-event_filter_descriptor
+	// If multiple Filters with the same filter type are specified, they are merged; check the filter
+	// type on what can be merged.
+	Filters []EventFilter
 }
 
 // ProviderOption is any function that modifies ProviderOptions. Options will be called
@@ -154,6 +161,16 @@ func WithMatchKeywords(anyKeyword, allKeyword uint64) ProviderOption {
 func WithProperty(p EnableProperty) ProviderOption {
 	return func(cfg *ProviderOptions) {
 		cfg.EnableProperties = append(cfg.EnableProperties, p)
+	}
+}
+
+// WithFilter limits the events that the provider sends. Multiple filters can
+// be specified to limit the events even further.
+// If multiple Filters with the same filter type are specified, they are merged; check the filter
+// type on what can be merged.
+func WithFilter(f EventFilter) ProviderOption {
+	return func(cfg *ProviderOptions) {
+		cfg.Filters = append(cfg.Filters, f)
 	}
 }
 

@@ -384,6 +384,39 @@ func (s *Session) subscribeToProvider(provider windows.GUID, options ProviderOpt
 	for _, p := range options.EnableProperties {
 		params.EnableProperty |= C.ULONG(p)
 	}
+	if len(options.Filters) > 0 {
+		filtersByType := map[eventFilterType]EventFilter{}
+		for _, filter := range options.Filters {
+			filterType := filter.Type()
+			if existingFilter, typeExists := filtersByType[filterType]; typeExists {
+				newFilter, err := filter.Merge(existingFilter)
+				if err != nil {
+					return fmt.Errorf("could not add filter: %w", err)
+				}
+				filtersByType[filterType] = newFilter
+			} else {
+				filtersByType[filterType] = filter
+			}
+		}
+		fmt.Printf("filters: %+v\n", filtersByType)
+		filterDescriptors := C.malloc(C.ULONGLONG(unsafe.Sizeof(C.EVENT_FILTER_DESCRIPTOR{}) * uintptr(len(filtersByType))))
+		defer C.free(filterDescriptors)
+		filterDescriptorSlice := (*[2 << 28]C.EVENT_FILTER_DESCRIPTOR)(filterDescriptors)
+		var index int
+		for _, filter := range filtersByType {
+			data := filter.EventFilterDescriptorData()
+			cBytes := C.CBytes(data)
+			defer C.free(cBytes)
+			filterDescriptorSlice[index] = C.EVENT_FILTER_DESCRIPTOR{
+				Ptr:  C.ULONGLONG(uintptr(cBytes)),
+				Size: C.ULONG(len(data)),
+				Type: C.ULONG(filter.Type()),
+			}
+			index++
+		}
+		params.EnableFilterDesc = C.PEVENT_FILTER_DESCRIPTOR(filterDescriptors)
+		params.FilterDescCount = C.ULONG(len(filtersByType))
+	}
 
 	// ULONG WMIAPI EnableTraceEx2(
 	//	TRACEHANDLE              TraceHandle,

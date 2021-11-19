@@ -398,7 +398,6 @@ func (s *Session) subscribeToProvider(provider windows.GUID, options ProviderOpt
 				filtersByType[filterType] = filter
 			}
 		}
-		fmt.Printf("filters: %+v\n", filtersByType)
 		filterDescriptors := C.malloc(C.ULONGLONG(unsafe.Sizeof(C.EVENT_FILTER_DESCRIPTOR{}) * uintptr(len(filtersByType))))
 		defer C.free(filterDescriptors)
 		filterDescriptorSlice := (*[2 << 28]C.EVENT_FILTER_DESCRIPTOR)(filterDescriptors)

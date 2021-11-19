@@ -2,6 +2,7 @@ package etw
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"unicode/utf16"
 	"unsafe"
@@ -21,9 +22,10 @@ import (
 import "C"
 
 var (
-	enumerateProviders = tdh.NewProc("TdhEnumerateProviders")
+	enumerateProviders                = tdh.NewProc("TdhEnumerateProviders")
 	enumerateProviderFieldInformation = tdh.NewProc("TdhEnumerateProviderFieldInformation")
-	queryProviderFieldInformation = tdh.NewProc("TdhQueryProviderFieldInformation")
+	queryProviderFieldInformation     = tdh.NewProc("TdhQueryProviderFieldInformation")
+	enumerateManifestProviderEvents   = tdh.NewProc("TdhEnumerateManifestProviderEvents")
 )
 
 type Provider struct {
@@ -32,26 +34,26 @@ type Provider struct {
 }
 
 type ProviderField struct {
-	Name string
+	Name        string
 	Description string
-	ID uint64
+	ID          uint64
 }
 
 type providerFieldInfoArray struct {
 	NumberOfElements uint32
-	FieldType uint32
-	FieldInfoArray [0]providerFieldInfo
+	FieldType        uint32
+	FieldInfoArray   [0]providerFieldInfo
 }
 
 type providerFieldInfo struct {
-	NameOffset uint32
+	NameOffset        uint32
 	DescriptionOffset uint32
-	Value uint64
+	Value             uint64
 }
 
 type eventFieldType uintptr
 
-const(
+const (
 	eventKeywordInformation eventFieldType = iota
 	eventLevelInformation
 	eventChannelInformation
@@ -208,7 +210,7 @@ func ListProviders() ([]Provider, error) {
 
 func parseUnicodeStringAtOffset(buffer []byte, offset int) string {
 	var nameArray []uint16
-	for j := offset; j < len(buffer) - 1; j+=2 {
+	for j := offset; j < len(buffer)-1; j += 2 {
 		unicodeChar := binary.LittleEndian.Uint16(buffer[j:])
 		if unicodeChar == 0 {
 			break
@@ -216,4 +218,41 @@ func parseUnicodeStringAtOffset(buffer []byte, offset int) string {
 		nameArray = append(nameArray, unicodeChar)
 	}
 	return string(utf16.Decode(nameArray))
+}
+
+func (p Provider) ListEvents() ([]EventDescriptor, error) {
+	if enumerateManifestProviderEvents.Find() != nil {
+		return nil, errors.New("event listing is only supported on Windows 8.1 and newer")
+	}
+	var requiredBufferSize uint
+	err, _, _ := enumerateManifestProviderEvents.Call(
+		uintptr(unsafe.Pointer(&p.Guid)),
+		0,
+		uintptr(unsafe.Pointer(&requiredBufferSize)),
+	)
+	if windows.Errno(err) != windows.ERROR_INSUFFICIENT_BUFFER {
+		return nil, fmt.Errorf("could not get buffer size for events: %w", windows.Errno(err))
+	}
+	var buffer = make([]byte, requiredBufferSize)
+	err, _, _ = enumerateManifestProviderEvents.Call(
+		uintptr(unsafe.Pointer(&p.Guid)),
+		uintptr(unsafe.Pointer(&buffer[0])),
+		uintptr(unsafe.Pointer(&requiredBufferSize)),
+	)
+	if windows.Errno(err) != windows.ERROR_SUCCESS {
+		return nil, fmt.Errorf("could not list events: %w", windows.Errno(err))
+	}
+	eventInfo := (*providerEventInfo)(unsafe.Pointer(&buffer[0]))
+	var descriptors = make([]EventDescriptor, eventInfo.NumberOfEvents)
+	for i, descriptor := range eventInfo.descriptors[:eventInfo.NumberOfEvents] {
+		descriptors[i] = eventDescriptorToGo(descriptor)
+	}
+	return descriptors, nil
+}
+
+// PROVIDER_EVENT_INFO, as described here: https://docs.microsoft.com/en-us/windows/win32/api/tdh/ns-tdh-provider_event_info
+type providerEventInfo struct {
+	NumberOfEvents uint32
+	_              uint32
+	descriptors    [2 << 25]C.EVENT_DESCRIPTOR
 }

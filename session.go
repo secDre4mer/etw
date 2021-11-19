@@ -398,9 +398,9 @@ func (s *Session) subscribeToProvider(provider windows.GUID, options ProviderOpt
 				filtersByType[filterType] = filter
 			}
 		}
-		filterDescriptors := C.malloc(C.ULONGLONG(unsafe.Sizeof(C.EVENT_FILTER_DESCRIPTOR{}) * uintptr(len(filtersByType))))
+		filterDescriptors := C.malloc(C.size_t(unsafe.Sizeof(C.EVENT_FILTER_DESCRIPTOR{}) * uintptr(len(filtersByType))))
 		defer C.free(filterDescriptors)
-		filterDescriptorSlice := (*[2 << 28]C.EVENT_FILTER_DESCRIPTOR)(filterDescriptors)
+		filterDescriptorSlice := (*[2 << 25]C.EVENT_FILTER_DESCRIPTOR)(filterDescriptors)
 		var index int
 		for _, filter := range filtersByType {
 			data := filter.EventFilterDescriptorData()

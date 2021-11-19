@@ -12,7 +12,7 @@ type EventFilter interface {
 	Merge(filter EventFilter) (EventFilter, error)
 }
 
-type eventFilterType int
+type eventFilterType uint32
 
 const (
 	EVENT_FILTER_TYPE_SCHEMATIZED eventFilterType = 0x80000000

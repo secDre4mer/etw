@@ -105,10 +105,6 @@ func NewSession(options ...SessionOption) (*Session, error) {
 	}
 	// TODO: consider setting a finalizer with .Close
 
-	if err := s.setEnableFlags(); err != nil {
-		s.Close()
-		return nil, fmt.Errorf("failed to set flags; %w", err)
-	}
 	return &s, nil
 }
 
@@ -310,10 +306,15 @@ func (s *Session) createETWSession() error {
 	default:
 		return fmt.Errorf("StartTraceW failed; %w", err)
 	}
+
+	if err := s.setEnableFlags(s.config.Flags); err != nil {
+		s.Close()
+		return fmt.Errorf("failed to set flags; %w", err)
+	}
 	return nil
 }
 
-func (s *Session) setEnableFlags(flags ...EnableFlag) error {
+func (s *Session) setEnableFlags(flags []EnableFlag) error {
 	var enableFlag C.ULONG
 	for _, flag := range flags {
 		if traceSetInformationFlags[flag] {
@@ -365,13 +366,22 @@ func (s *Session) updateSessionProperties(config SessionOptions) error {
 		C.PEVENT_TRACE_PROPERTIES(unsafe.Pointer(&propertiesBuf[0])),
 		C.EVENT_TRACE_CONTROL_UPDATE,
 	)
-	switch err := windows.Errno(ret); err {
-	case windows.ERROR_SUCCESS:
-		s.propertiesBuf = propertiesBuf
-		s.config = config
-	default:
+	if err := windows.Errno(ret); err != windows.ERROR_SUCCESS {
 		return fmt.Errorf("ControlTraceW failed; %w", err)
 	}
+	if err := s.setEnableFlags(config.Flags); err != nil {
+		// Try to revert changes made with ControlTraceW
+		// by reverting to the old, stored propertiesBuf
+		C.ControlTraceW(
+			s.hSession,
+			C.LPWSTR(unsafe.Pointer(&s.etwSessionName[0])),
+			C.PEVENT_TRACE_PROPERTIES(unsafe.Pointer(&s.propertiesBuf[0])),
+			C.EVENT_TRACE_CONTROL_UPDATE,
+		)
+		return fmt.Errorf("failed to set flags; %w", err)
+	}
+	s.propertiesBuf = propertiesBuf
+	s.config = config
 	return nil
 }
 

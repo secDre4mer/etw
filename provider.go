@@ -186,6 +186,9 @@ func ListProviders() ([]Provider, error) {
 	status := windows.ERROR_INSUFFICIENT_BUFFER
 	var buffer []byte
 	for status == windows.ERROR_INSUFFICIENT_BUFFER {
+		if requiredSize == 0 {
+			return nil, nil
+		}
 		buffer = make([]byte, requiredSize)
 		plainStatus, _, _ := enumerateProviders.Call(
 			uintptr(unsafe.Pointer(&buffer[0])),

@@ -395,7 +395,7 @@ func (s *Session) subscribeToProvider(provider windows.GUID, options ProviderOpt
 		params.EnableProperty |= C.ULONG(p)
 	}
 	if len(options.Filters) > 0 {
-		filtersByType := map[eventFilterType]EventFilter{}
+		filtersByType := map[EventFilterType]EventFilter{}
 		for _, filter := range options.Filters {
 			filterType := filter.Type()
 			if existingFilter, typeExists := filtersByType[filterType]; typeExists {
@@ -413,14 +413,14 @@ func (s *Session) subscribeToProvider(provider windows.GUID, options ProviderOpt
 		filterDescriptorSlice := (*[2 << 25]C.EVENT_FILTER_DESCRIPTOR)(filterDescriptors)
 		var index int
 		for _, filter := range filtersByType {
-			data := filter.EventFilterDescriptorData()
-			cBytes := C.CBytes(data)
-			defer C.free(cBytes)
-			filterDescriptorSlice[index] = C.EVENT_FILTER_DESCRIPTOR{
-				Ptr:  C.ULONGLONG(uintptr(cBytes)),
-				Size: C.ULONG(len(data)),
-				Type: C.ULONG(filter.Type()),
+			descriptor, err := filter.EventFilterDescriptor()
+			if err != nil {
+				return err
 			}
+			if descriptor.Close != nil {
+				defer descriptor.Close()
+			}
+			filterDescriptorSlice[index] = descriptor.Descriptor
 			index++
 		}
 		params.EnableFilterDesc = C.PEVENT_FILTER_DESCRIPTOR(filterDescriptors)
@@ -673,17 +673,5 @@ func eventHeaderToGo(header C.EVENT_HEADER) EventHeader {
 		KernelTime:    uint32(C.GetKernelTime(header)),
 		UserTime:      uint32(C.GetUserTime(header)),
 		ProcessorTime: uint64(C.GetProcessorTime(header)),
-	}
-}
-
-func eventDescriptorToGo(descriptor C.EVENT_DESCRIPTOR) EventDescriptor {
-	return EventDescriptor{
-		ID:      uint16(descriptor.Id),
-		Version: uint8(descriptor.Version),
-		Channel: uint8(descriptor.Channel),
-		Level:   uint8(descriptor.Level),
-		OpCode:  uint8(descriptor.Opcode),
-		Task:    uint16(descriptor.Task),
-		Keyword: uint64(descriptor.Keyword),
 	}
 }

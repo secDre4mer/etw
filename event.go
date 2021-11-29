@@ -22,8 +22,8 @@ import (
 // Events will be passed to the user EventCallback. It's invalid to use Event
 // methods outside of an EventCallback.
 type Event struct {
-	Header      EventHeader
-	eventRecord C.PEVENT_RECORD
+	Header        EventHeader
+	eventRecord   C.PEVENT_RECORD
 	ignoreMapInfo bool
 }
 
@@ -76,6 +76,30 @@ type EventDescriptor struct {
 	OpCode  uint8
 	Task    uint16
 	Keyword uint64
+}
+
+func eventDescriptorToGo(descriptor C.EVENT_DESCRIPTOR) EventDescriptor {
+	return EventDescriptor{
+		ID:      uint16(descriptor.Id),
+		Version: uint8(descriptor.Version),
+		Channel: uint8(descriptor.Channel),
+		Level:   uint8(descriptor.Level),
+		OpCode:  uint8(descriptor.Opcode),
+		Task:    uint16(descriptor.Task),
+		Keyword: uint64(descriptor.Keyword),
+	}
+}
+
+func (e EventDescriptor) toCDescriptor() C.EVENT_DESCRIPTOR {
+	return C.EVENT_DESCRIPTOR{
+		Id:      C.USHORT(e.ID),
+		Version: C.UCHAR(e.Version),
+		Channel: C.UCHAR(e.Channel),
+		Level:   C.UCHAR(e.Level),
+		Opcode:  C.UCHAR(e.OpCode),
+		Task:    C.USHORT(e.Task),
+		Keyword: C.ULONGLONG(e.Keyword),
+	}
 }
 
 // EventProperties returns a map that represents events-specific data provided
@@ -249,11 +273,11 @@ func (e *Event) parseExtendedInfo() ExtendedEventInfo {
 
 // propertyParser is used for parsing properties from raw EVENT_RECORD structure.
 type propertyParser struct {
-	record  C.PEVENT_RECORD
-	info    C.PTRACE_EVENT_INFO
-	data    uintptr
-	endData uintptr
-	ptrSize uintptr
+	record        C.PEVENT_RECORD
+	info          C.PTRACE_EVENT_INFO
+	data          uintptr
+	endData       uintptr
+	ptrSize       uintptr
 	ignoreMapInfo bool
 }
 
@@ -270,11 +294,11 @@ func newPropertyParser(r C.PEVENT_RECORD, ignoreMapInfo bool) (*propertyParser, 
 		ptrSize = unsafe.Sizeof(uint32(0))
 	}
 	return &propertyParser{
-		record:  r,
-		info:    info,
-		ptrSize: ptrSize,
-		data:    uintptr(r.UserData),
-		endData: uintptr(r.UserData) + uintptr(r.UserDataLength),
+		record:        r,
+		info:          info,
+		ptrSize:       ptrSize,
+		data:          uintptr(r.UserData),
+		endData:       uintptr(r.UserData) + uintptr(r.UserDataLength),
 		ignoreMapInfo: ignoreMapInfo,
 	}, nil
 }

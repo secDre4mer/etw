@@ -1,22 +1,31 @@
 package etw
 
+/*
+#include "session.h"
+*/
+import "C"
+
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
 
 type EventFilter interface {
-	EventFilterDescriptorData() []byte
-	Type() eventFilterType
+	EventFilterDescriptor() (EventFilterDescriptor, error)
+	Type() EventFilterType
 	Merge(filter EventFilter) (EventFilter, error)
 }
 
-type eventFilterType uint32
+type EventFilterType uint32
 
 const (
-	EVENT_FILTER_TYPE_SCHEMATIZED eventFilterType = 0x80000000
-	EVENT_FILTER_TYPE_EVENT_ID    eventFilterType = 0x80000200
+	EVENT_FILTER_TYPE_SCHEMATIZED EventFilterType = 0x80000000
+	EVENT_FILTER_TYPE_EVENT_ID    EventFilterType = 0x80000200
+	EVENT_FILTER_TYPE_PAYLOAD     EventFilterType = 0x80000100
 )
 
 // EventIdFilter is a simple filter that filters by Event ID.
@@ -37,7 +46,7 @@ type eventFilterEventId struct {
 	// ... Events...
 }
 
-func (e EventIdFilter) EventFilterDescriptorData() []byte {
+func (e EventIdFilter) EventFilterDescriptor() (EventFilterDescriptor, error) {
 	// Generate a EVENT_FILTER_EVENT_ID structure, as described here:
 	// https://docs.microsoft.com/en-us/windows/win32/api/evntprov/ns-evntprov-event_filter_event_id
 	var buffer = make([]byte, int(unsafe.Sizeof(eventFilterEventId{}))+2*len(e.EventIds))
@@ -47,10 +56,21 @@ func (e EventIdFilter) EventFilterDescriptorData() []byte {
 	for i, eventId := range e.EventIds {
 		binary.LittleEndian.PutUint16(buffer[int(unsafe.Sizeof(eventFilterEventId{}))+2*i:], eventId)
 	}
-	return buffer
+	cBuffer := C.CBytes(buffer)
+	return EventFilterDescriptor{
+		Descriptor: C.EVENT_FILTER_DESCRIPTOR{
+			Ptr:  C.ULONGLONG(uintptr(cBuffer)),
+			Size: C.ULONG(len(buffer)),
+			Type: C.ULONG(EVENT_FILTER_TYPE_EVENT_ID),
+		},
+		Close: func() error {
+			C.free(cBuffer)
+			return nil
+		},
+	}, nil
 }
 
-func (e EventIdFilter) Type() eventFilterType {
+func (e EventIdFilter) Type() EventFilterType {
 	return EVENT_FILTER_TYPE_EVENT_ID
 }
 
@@ -64,3 +84,129 @@ func (e EventIdFilter) Merge(other EventFilter) (EventFilter, error) {
 		PositiveFilter: e.PositiveFilter,
 	}, nil
 }
+
+type EventPayloadFilter struct {
+	FilteredProvider   windows.GUID
+	FilteredDescriptor EventDescriptor
+	Comparisons        []EventPayloadCompare
+	AnyMatches         bool
+}
+
+// PAYLOAD_FILTER_PREDICATE definition, https://docs.microsoft.com/en-us/windows/win32/api/tdh/ns-tdh-payload_filter_predicate
+type payloadFilterPredicate struct {
+	FieldName *uint16
+	Operation CompareOperation
+	Value     *uint16
+}
+
+var (
+	tdhCreatePayloadFilter                 = tdh.NewProc("TdhCreatePayloadFilter")
+	tdhDeletePayloadFilter                 = tdh.NewProc("TdhDeletePayloadFilter")
+	tdhAggregatePayloadFilters             = tdh.NewProc("TdhAggregatePayloadFilters")
+	tdhCleanupPayloadEventFilterDescriptor = tdh.NewProc("TdhCleanupPayloadEventFilterDescriptor")
+)
+
+type EventFilterDescriptor struct {
+	Descriptor C.EVENT_FILTER_DESCRIPTOR
+	Close      func() error
+}
+
+func (e EventPayloadFilter) EventFilterDescriptor() (EventFilterDescriptor, error) {
+	cDescriptor := e.FilteredDescriptor.toCDescriptor()
+	var anyMatches uintptr
+	if e.AnyMatches {
+		anyMatches = 1
+	}
+	var comparisons = make([]payloadFilterPredicate, len(e.Comparisons))
+	for i := range e.Comparisons {
+		var err error
+		comparisons[i], err = e.Comparisons[i].toPayloadFilterPredicate()
+		if err != nil {
+			return EventFilterDescriptor{}, err
+		}
+	}
+	var payloadFilter uintptr
+	status, _, _ := tdhCreatePayloadFilter.Call(
+		uintptr(unsafe.Pointer(&e.FilteredProvider)),
+		uintptr(unsafe.Pointer(&cDescriptor)),
+		anyMatches,
+		uintptr(len(comparisons)),
+		uintptr(unsafe.Pointer(&comparisons[0])),
+		uintptr(unsafe.Pointer(&payloadFilter)),
+	)
+	if status != 0 {
+		return EventFilterDescriptor{}, fmt.Errorf("TdhCreatePayloadFilter failed with %w", windows.Errno(status))
+	}
+	defer tdhDeletePayloadFilter.Call(uintptr(unsafe.Pointer(&payloadFilter)))
+	var filterDescriptor C.EVENT_FILTER_DESCRIPTOR
+	status, _, _ = tdhAggregatePayloadFilters.Call(
+		1,
+		uintptr(unsafe.Pointer(&payloadFilter)),
+		0,
+		uintptr(unsafe.Pointer(&filterDescriptor)),
+	)
+	if status != 0 {
+		return EventFilterDescriptor{}, fmt.Errorf("TdhAggregatePayloadFilters failed with %w", windows.Errno(status))
+	}
+	cleanup := func() error {
+		status, _, _ := tdhCleanupPayloadEventFilterDescriptor.Call(uintptr(unsafe.Pointer(&filterDescriptor)))
+		if status != 0 {
+			return fmt.Errorf("TdhCleanupPayloadEventFilterDescriptor failed with %w", windows.Errno(status))
+		}
+		return nil
+	}
+	return EventFilterDescriptor{
+		Descriptor: filterDescriptor,
+		Close:      cleanup,
+	}, nil
+}
+
+func (EventPayloadFilter) Type() EventFilterType {
+	return EVENT_FILTER_TYPE_PAYLOAD
+}
+
+func (EventPayloadFilter) Merge(filter EventFilter) (EventFilter, error) {
+	return nil, errors.New("payload filter merge not supported yet")
+}
+
+type EventPayloadCompare struct {
+	Field     string
+	Value     string
+	Operation CompareOperation
+}
+
+func (e EventPayloadCompare) toPayloadFilterPredicate() (payloadFilterPredicate, error) {
+	fieldName, err := windows.UTF16PtrFromString(e.Field)
+	if err != nil {
+		return payloadFilterPredicate{}, err
+	}
+	value, err := windows.UTF16PtrFromString(e.Value)
+	if err != nil {
+		return payloadFilterPredicate{}, err
+	}
+	return payloadFilterPredicate{
+		FieldName: fieldName,
+		Operation: e.Operation,
+		Value:     value,
+	}, nil
+}
+
+type CompareOperation uint16
+
+const (
+	CompareIntegerEqual CompareOperation = iota
+	CompareIntegerNotEqual
+	CompareIntegerLessOrEqual
+	CompareIntegerGreater
+	CompareIntegerLess
+	CompareIntegerGreatorOrEqual
+	CompareIntegerBetween
+	CompareIntegerNotBetween
+	CompareIntegerModulo
+)
+const (
+	CompareStringContains    CompareOperation = 20
+	CompareStringNotContains CompareOperation = 21
+	CompareStringEquals      CompareOperation = 30
+	CompareStringNotEquals   CompareOperation = 31
+)

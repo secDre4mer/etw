@@ -119,6 +119,10 @@ type ProviderOptions struct {
 	// If multiple Filters with the same filter type are specified, they are merged; check the filter
 	// type on what can be merged.
 	Filters []EventFilter
+
+	// TriggerRundown requests a log of the provider's state information. This typically causes a number
+	// of rundown events to be sent at the provider's start.
+	TriggerRundown bool
 }
 
 // ProviderOption is any function that modifies ProviderOptions. Options will be called
@@ -171,6 +175,13 @@ func WithProperty(p EnableProperty) ProviderOption {
 func WithFilter(f EventFilter) ProviderOption {
 	return func(cfg *ProviderOptions) {
 		cfg.Filters = append(cfg.Filters, f)
+	}
+}
+
+// WithRundown requests a rundown of the current provider state when the provider is added.
+func WithRundown(withRundown bool) ProviderOption {
+	return func(cfg *ProviderOptions) {
+		cfg.TriggerRundown = withRundown
 	}
 }
 

@@ -453,6 +453,22 @@ func (s *Session) subscribeToProvider(provider windows.GUID, options ProviderOpt
 	if status := windows.Errno(ret); status != windows.ERROR_SUCCESS {
 		return fmt.Errorf("EVENT_CONTROL_CODE_ENABLE_PROVIDER failed for GUID %s; %w", provider, status)
 	}
+
+	if options.TriggerRundown {
+		ret := C.EnableTraceEx2(
+			s.hSession,
+			(*C.GUID)(unsafe.Pointer(&provider)),
+			C.EVENT_CONTROL_CODE_CAPTURE_STATE,
+			C.UCHAR(options.Level),
+			C.ULONGLONG(options.MatchAnyKeyword),
+			C.ULONGLONG(options.MatchAllKeyword),
+			0,
+			&params, //nolint:gocritic
+		)
+		if status := windows.Errno(ret); status != windows.ERROR_SUCCESS {
+			return fmt.Errorf("EVENT_CONTROL_CODE_CAPTURE_STATE failed for GUID %s; %w", provider, status)
+		}
+	}
 	return nil
 }
 

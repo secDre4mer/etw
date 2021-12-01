@@ -278,4 +278,8 @@ const (
 	// EVENT_TRACE_SYSTEM_LOGGER_MODE specifies that the session will receive events from the
 	// SystemTraceProvider.
 	EVENT_TRACE_SYSTEM_LOGGER_MODE = LogFileMode(0x02000000)
+
+	// EVENT_TRACE_INDEPENDENT_SESSION_MODE specifies that this session should not be affected
+	// by failures in other ETW sessions.
+	EVENT_TRACE_INDEPENDENT_SESSION_MODE = LogFileMode(0x08000000)
 )

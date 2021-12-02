@@ -315,13 +315,17 @@ func (s *Session) createETWSession() error {
 }
 
 func (s *Session) setEnableFlags(flags []EnableFlag) error {
-	var enableFlag C.ULONG
+	var activateRundown bool
+	var traceSetInfoFlags C.ULONG
 	for _, flag := range flags {
 		if traceSetInformationFlags[flag] {
-			enableFlag |= C.ULONG(flag)
+			traceSetInfoFlags |= C.ULONG(flag)
+		}
+		if flag == EVENT_TRACE_FLAG_RUNDOWN {
+			activateRundown = true
 		}
 	}
-	if enableFlag == 0 {
+	if traceSetInfoFlags == 0 && !activateRundown {
 		return nil
 	}
 	if err := traceSetInformation.Find(); err != nil {
@@ -341,7 +345,20 @@ func (s *Session) setEnableFlags(flags []EnableFlag) error {
 	if err := windows.Errno(ret); err != windows.ERROR_SUCCESS {
 		return fmt.Errorf("TraceQueryInformation failed; %w", err)
 	}
-	masks[4] = enableFlag
+	if activateRundown {
+		var emptyMask perfinfoGroupmask
+		ret, _, _ = traceSetInformation.Call(
+			uintptr(s.hSession),
+			uintptr(C.TraceSystemTraceEnableFlagsInfo),
+			uintptr(unsafe.Pointer(&emptyMask)),
+			unsafe.Sizeof(emptyMask),
+		)
+		if err := windows.Errno(ret); err != windows.ERROR_SUCCESS {
+			return fmt.Errorf("TraceSetInformation failed; %w", err)
+		}
+	}
+
+	masks[4] = traceSetInfoFlags
 
 	ret, _, _ = traceSetInformation.Call(
 		uintptr(s.hSession),

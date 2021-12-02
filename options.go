@@ -260,10 +260,14 @@ const (
 	EVENT_TRACE_FLAG_VAMAP              = EnableFlag(C.EVENT_TRACE_FLAG_VAMAP)
 	EVENT_TRACE_FLAG_VIRTUAL_ALLOC      = EnableFlag(C.EVENT_TRACE_FLAG_VIRTUAL_ALLOC)
 
-	// Special flags that are undocument and must be set via TraceSetInformation
 	EVENT_TRACE_FLAG_OBTRACE EnableFlag = 0x80000040
+
+	// EVENT_TRACE_FLAG_RUNDOWN is not a real flag, but another undefined behavior.
+	// Use to cause a call TraceSetInformation with an empty mask, which activates rundown events.
+	EVENT_TRACE_FLAG_RUNDOWN EnableFlag = 0x00000000
 )
 
+// Map with all events that must be set via the 5th byte in TraceSetInformation instead of the normal EnableFlags
 var traceSetInformationFlags = map[EnableFlag]bool{
 	EVENT_TRACE_FLAG_OBTRACE: true,
 }

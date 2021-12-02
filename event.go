@@ -142,7 +142,7 @@ func (e *Event) EventProperties() (map[string]interface{}, error) {
 		if err != nil {
 			// Parsing values we consume given event data buffer with var length chunks.
 			// If we skip any -- we'll lost offset, so fail early.
-			return nil, fmt.Errorf("failed to parse %q value; %w", name, err)
+			return properties, fmt.Errorf("failed to parse %q value; %w", name, err)
 		}
 		properties[name] = value
 	}

@@ -1,4 +1,5 @@
-//+build windows
+//go:build windows
+// +build windows
 
 // Package etw allows you to receive Event Tracing for Windows (ETW) events.
 //
@@ -18,6 +19,7 @@ package etw
 import "C"
 import (
 	"fmt"
+	"math"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -38,12 +40,11 @@ var (
 //
 // Having ExistsError you have an option to force kill the session:
 //
-//		var exists etw.ExistsError
-//		s, err = etw.NewSession(s.guid, etw.WithName(sessionName))
-//		if errors.As(err, &exists) {
-//			err = etw.KillSession(exists.SessionName)
-//		}
-//
+//	var exists etw.ExistsError
+//	s, err = etw.NewSession(s.guid, etw.WithName(sessionName))
+//	if errors.As(err, &exists) {
+//		err = etw.KillSession(exists.SessionName)
+//	}
 type ExistsError struct{ SessionName string }
 
 func (e ExistsError) Error() string {
@@ -526,6 +527,7 @@ func (s *Session) processEvents(callbackContextKey uintptr) error {
 	traceHandle := C.OpenTraceHelper(
 		(C.LPWSTR)(unsafe.Pointer(&s.etwSessionName[0])),
 		(C.PVOID)(callbackContextKey),
+		C.uintptr_t(handleEventStdcall),
 	)
 	if C.INVALID_PROCESSTRACE_HANDLE == traceHandle {
 		return fmt.Errorf("OpenTraceW failed; %w", windows.GetLastError())
@@ -653,17 +655,14 @@ func freeCallbackKey(key uintptr) {
 	sessions.Delete(key)
 }
 
-// handleEvent is exported to guarantee C calling convention (cdecl).
-//
-// The function should be defined here but would be linked and used inside
-// C code in `session.c`.
-//
-//export handleEvent
-func handleEvent(eventRecord C.PEVENT_RECORD) {
-	key := uintptr(eventRecord.UserContext)
+var handleEventStdcall = windows.NewCallback(handleEvent)
+
+// handleEvent handles an incoming ETW event. The session is determined by the UserContext key.
+func handleEvent(eventRecord *eventRecordC) uintptr {
+	key := eventRecord.UserContext
 	targetSession, ok := sessions.Load(key)
 	if !ok {
-		return
+		return 0
 	}
 
 	session := targetSession.(*Session)
@@ -675,20 +674,30 @@ func handleEvent(eventRecord C.PEVENT_RECORD) {
 	session.callback(evt)
 	session.processedEvents++
 	evt.eventRecord = nil
+	return 0
 }
 
-func eventHeaderToGo(header C.EVENT_HEADER) EventHeader {
+func eventHeaderToGo(header eventHeaderC) EventHeader {
 	return EventHeader{
-		EventDescriptor: eventDescriptorToGo(header.EventDescriptor),
-		ThreadID:        uint32(header.ThreadId),
-		ProcessID:       uint32(header.ProcessId),
-		TimeStamp:       stampToTime(C.GetTimeStamp(header)),
-		ProviderID:      windowsGUIDToGo(header.ProviderId),
-		ActivityID:      windowsGUIDToGo(header.ActivityId),
+		EventDescriptor: header.EventDescriptor,
+		ThreadID:        header.ThreadId,
+		ProcessID:       header.ProcessId,
+		TimeStamp:       stampToTime(header.Timestamp),
+		ProviderID:      header.ProviderId,
+		ActivityID:      header.ActivityId,
 
-		Flags:         uint16(header.Flags),
-		KernelTime:    uint32(C.GetKernelTime(header)),
-		UserTime:      uint32(C.GetUserTime(header)),
-		ProcessorTime: uint64(C.GetProcessorTime(header)),
+		Flags:         header.Flags,
+		KernelTime:    header.KernelTime,
+		UserTime:      header.UserTime,
+		ProcessorTime: uint64(header.KernelTime) + uint64(header.UserTime)<<32,
 	}
+}
+
+// stampToTime translates FileTime to a golang time. Same as in standard packages.
+func stampToTime(quadPart uint64) time.Time {
+	ft := windows.Filetime{
+		HighDateTime: uint32(quadPart >> 32),
+		LowDateTime:  uint32(quadPart & math.MaxUint32),
+	}
+	return time.Unix(0, ft.Nanoseconds())
 }

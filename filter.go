@@ -210,3 +210,27 @@ const (
 	CompareStringEquals      CompareOperation = 30
 	CompareStringNotEquals   CompareOperation = 31
 )
+
+func eventDescriptorToGo(descriptor C.EVENT_DESCRIPTOR) EventDescriptor {
+	return EventDescriptor{
+		ID:      uint16(descriptor.Id),
+		Version: uint8(descriptor.Version),
+		Channel: uint8(descriptor.Channel),
+		Level:   uint8(descriptor.Level),
+		OpCode:  uint8(descriptor.Opcode),
+		Task:    uint16(descriptor.Task),
+		Keyword: uint64(descriptor.Keyword),
+	}
+}
+
+func (e EventDescriptor) toCDescriptor() C.EVENT_DESCRIPTOR {
+	return C.EVENT_DESCRIPTOR{
+		Id:      C.USHORT(e.ID),
+		Version: C.UCHAR(e.Version),
+		Channel: C.UCHAR(e.Channel),
+		Level:   C.UCHAR(e.Level),
+		Opcode:  C.UCHAR(e.OpCode),
+		Task:    C.USHORT(e.Task),
+		Keyword: C.ULONGLONG(e.Keyword),
+	}
+}

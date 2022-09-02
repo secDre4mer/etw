@@ -155,7 +155,7 @@ func (p Provider) listFields(fieldType eventFieldType) ([]ProviderField, error) 
 func parseFieldInfoArray(buffer []byte) []ProviderField {
 	infoArray := (*providerFieldInfoArray)(unsafe.Pointer(&buffer[0]))
 	// Recast field info array to escape golang boundary checks
-	fieldInfoArray := (*[1 << 25]providerFieldInfo)(unsafe.Pointer(&infoArray.FieldInfoArray))
+	fieldInfoArray := (*[anysizeArray]providerFieldInfo)(unsafe.Pointer(&infoArray.FieldInfoArray))
 	var fields []ProviderField
 	for _, fieldInfo := range fieldInfoArray[:infoArray.NumberOfElements] {
 		fields = append(fields, ProviderField{
@@ -201,7 +201,7 @@ func ListProviders() ([]Provider, error) {
 	var parsedProviders []Provider
 	enumerationInfo := (*C.PROVIDER_ENUMERATION_INFO)(unsafe.Pointer(&buffer[0]))
 	// Recast provider info array to escape golang boundary checks
-	providerInfoArray := (*[1 << 25]C.TRACE_PROVIDER_INFO)(unsafe.Pointer(&enumerationInfo.TraceProviderInfoArray))
+	providerInfoArray := (*[anysizeArray]C.TRACE_PROVIDER_INFO)(unsafe.Pointer(&enumerationInfo.TraceProviderInfoArray))
 	for _, providerInfo := range providerInfoArray[:enumerationInfo.NumberOfProviders] {
 		parsedProviders = append(parsedProviders, Provider{
 			Name: parseUnicodeStringAtOffset(buffer, int(providerInfo.ProviderNameOffset)),
@@ -209,6 +209,19 @@ func ListProviders() ([]Provider, error) {
 		})
 	}
 	return parsedProviders, nil
+}
+
+func windowsGUIDToGo(guid C.GUID) windows.GUID {
+	var data4 [8]byte
+	for i := range data4 {
+		data4[i] = byte(guid.Data4[i])
+	}
+	return windows.GUID{
+		Data1: uint32(guid.Data1),
+		Data2: uint16(guid.Data2),
+		Data3: uint16(guid.Data3),
+		Data4: data4,
+	}
 }
 
 func parseUnicodeStringAtOffset(buffer []byte, offset int) string {
@@ -257,5 +270,5 @@ func (p Provider) ListEvents() ([]EventDescriptor, error) {
 type providerEventInfo struct {
 	NumberOfEvents uint32
 	_              uint32
-	descriptors    [2 << 25]C.EVENT_DESCRIPTOR
+	descriptors    [anysizeArray]C.EVENT_DESCRIPTOR
 }

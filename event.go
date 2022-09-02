@@ -5,6 +5,7 @@ package etw
 
 import (
 	"fmt"
+	"sync"
 	"time"
 	"unsafe"
 
@@ -90,6 +91,7 @@ func (e *Event) EventProperties() (map[string]interface{}, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse event properties; %w", err)
 	}
+	defer p.free()
 
 	properties := make(map[string]interface{}, int(p.info.TopLevelPropertyCount))
 	for i := 0; i < int(p.info.TopLevelPropertyCount); i++ {
@@ -232,14 +234,22 @@ func (e *Event) parseExtendedInfo() ExtendedEventInfo {
 type propertyParser struct {
 	record        *eventRecordC
 	info          *traceEventInfoC
+	infoBuffer    []byte
 	data          unsafe.Pointer
 	remainingData uintptr
 	ptrSize       uintptr
 	ignoreMapInfo bool
+
+	parseBuffer []byte
+}
+
+func (p *propertyParser) free() {
+	eventInfoBufferPool.Put(p.infoBuffer)
+	dataBufferPool.Put(p.parseBuffer)
 }
 
 func newPropertyParser(r *eventRecordC, ignoreMapInfo bool) (*propertyParser, error) {
-	info, err := getEventInformation(r)
+	info, infoBuffer, err := getEventInformation(r)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get event information; %w", err)
 	}
@@ -250,10 +260,12 @@ func newPropertyParser(r *eventRecordC, ignoreMapInfo bool) (*propertyParser, er
 	return &propertyParser{
 		record:        r,
 		info:          info,
+		infoBuffer:    infoBuffer,
 		ptrSize:       ptrSize,
 		data:          r.UserData,
 		remainingData: uintptr(r.UserDataLength),
 		ignoreMapInfo: ignoreMapInfo,
+		parseBuffer:   dataBufferPool.Get().([]byte),
 	}, nil
 }
 
@@ -261,41 +273,55 @@ var (
 	tdhGetEventInformation = tdh.NewProc("TdhGetEventInformation")
 )
 
+var eventInfoBufferSize = 10 * 1024
+
+var eventInfoBufferPool = sync.Pool{
+	New: func() interface{} {
+		return make([]byte, eventInfoBufferSize)
+	},
+}
+
+const dataBufferSize = 100
+
+var dataBufferPool = sync.Pool{
+	New: func() interface{} {
+		return make([]byte, dataBufferSize)
+	},
+}
+
 // getEventInformation wraps TdhGetEventInformation. It extracts some kind of
 // simplified event information used by Tdh* family of function.
-func getEventInformation(pEvent *eventRecordC) (*traceEventInfoC, error) {
-	var (
-		pInfo      *traceEventInfoC
-		bufferSize uint32
-	)
+func getEventInformation(pEvent *eventRecordC) (*traceEventInfoC, []byte, error) {
+	buffer := eventInfoBufferPool.Get().([]byte)
+
+	var bufferSize = uint32(len(buffer))
 
 	// Retrieve a buffer size.
 	ret, _, _ := tdhGetEventInformation.Call(
 		uintptr(unsafe.Pointer(pEvent)),
 		0,
 		0,
-		uintptr(unsafe.Pointer(pInfo)),
+		uintptr(unsafe.Pointer(&buffer[0])),
 		uintptr(unsafe.Pointer(&bufferSize)),
 	)
 	if windows.Errno(ret) == windows.ERROR_INSUFFICIENT_BUFFER {
-		var buffer = make([]uint8, bufferSize)
-		pInfo = (*traceEventInfoC)(unsafe.Pointer(&buffer[0]))
+		buffer = make([]uint8, bufferSize)
 
 		// Fetch the buffer itself.
 		ret, _, _ = tdhGetEventInformation.Call(
 			uintptr(unsafe.Pointer(pEvent)),
 			0,
 			0,
-			uintptr(unsafe.Pointer(pInfo)),
+			uintptr(unsafe.Pointer(&buffer[0])),
 			uintptr(unsafe.Pointer(&bufferSize)),
 		)
 	}
 
 	if status := windows.Errno(ret); status != windows.ERROR_SUCCESS {
-		return nil, fmt.Errorf("TdhGetEventInformation failed; %w", status)
+		return nil, nil, fmt.Errorf("TdhGetEventInformation failed; %w", status)
 	}
 
-	return pInfo, nil
+	return (*traceEventInfoC)(unsafe.Pointer(&buffer[0])), buffer, nil
 }
 
 func getPropertyName(info *traceEventInfoC, i int) unsafe.Pointer {
@@ -444,12 +470,10 @@ func (p *propertyParser) parseSimpleType(i int) (string, error) {
 	inType := p.info.EventPropertyInfoArray[i].nonStructType.InType
 	outType := p.info.EventPropertyInfoArray[i].nonStructType.OutType
 
-	// We are going to guess a value size to save a DLL call, so preallocate.
-	var (
-		userDataConsumed  int
-		formattedDataSize = 50
-	)
-	formattedData := make([]byte, formattedDataSize)
+	var userDataConsumed int
+
+	// Initialize parse buffer with a size that should be sufficient for most properties.
+	formattedDataSize := len(p.parseBuffer)
 
 retryLoop:
 	for {
@@ -463,7 +487,7 @@ retryLoop:
 			p.remainingData,
 			uintptr(p.data),
 			uintptr(unsafe.Pointer(&formattedDataSize)),
-			uintptr(unsafe.Pointer(&formattedData[0])),
+			uintptr(unsafe.Pointer(&p.parseBuffer[0])),
 			uintptr(unsafe.Pointer(&userDataConsumed)),
 		)
 
@@ -472,7 +496,7 @@ retryLoop:
 			break retryLoop
 
 		case windows.ERROR_INSUFFICIENT_BUFFER:
-			formattedData = make([]byte, formattedDataSize)
+			p.parseBuffer = make([]byte, formattedDataSize)
 			continue
 
 		case windows.ERROR_EVT_INVALID_EVENT_DATA:
@@ -492,7 +516,7 @@ retryLoop:
 	p.data = unsafe.Add(p.data, userDataConsumed)
 	p.remainingData -= uintptr(userDataConsumed)
 
-	return createUTF16String(unsafe.Pointer(&formattedData[0]), formattedDataSize), nil
+	return createUTF16String(unsafe.Pointer(&p.parseBuffer[0]), formattedDataSize), nil
 }
 
 var (

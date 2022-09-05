@@ -1,3 +1,4 @@
+//go:build windows
 // +build windows
 
 package etw_test
@@ -55,6 +56,7 @@ func (s *sessionSuite) TestSmoke() {
 	// Ensure we can subscribe to our in-house ETW provider.
 	session, err := etw.NewSession()
 	s.Require().NoError(err, "Failed to create session")
+	defer session.Close()
 	err = session.AddProvider(s.guid)
 	s.Require().NoError(err, "Failed to add provider")
 
@@ -90,6 +92,7 @@ func (s *sessionSuite) TestUpdating() {
 	// Then subscribe for CRITICAL only.
 	session, err := etw.NewSession()
 	s.Require().NoError(err, "Failed to create session")
+	defer session.Close()
 	err = session.AddProvider(s.guid, etw.WithLevel(etw.TRACE_LEVEL_CRITICAL))
 	s.Require().NoError(err, "Failed to add provider")
 
@@ -172,6 +175,7 @@ func (s *sessionSuite) TestParsing() {
 
 	session, err := etw.NewSession()
 	s.Require().NoError(err, "Failed to create a session")
+	defer session.Close()
 	err = session.AddProvider(s.guid, etw.WithLevel(etw.TRACE_LEVEL_VERBOSE))
 	s.Require().NoError(err, "Failed to add provider")
 
@@ -228,6 +232,7 @@ func (s *sessionSuite) TestKillSession() {
 func (s *sessionSuite) TestStat() {
 	session, err := etw.NewSession()
 	s.Require().NoError(err, "Failed to create session")
+	defer session.Close()
 
 	_, err = session.Stat()
 	s.Require().NoError(err, "Failed to stat session")
@@ -240,6 +245,7 @@ func (s *sessionSuite) TestEventOutsideCallback() {
 
 	session, err := etw.NewSession()
 	s.Require().NoError(err, "Failed to create session")
+	defer session.Close()
 	err = session.AddProvider(s.guid)
 	s.Require().NoError(err, "Failed to add provider")
 

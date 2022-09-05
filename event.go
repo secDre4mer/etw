@@ -345,8 +345,8 @@ var (
 	tdhGetProperty     = tdh.NewProc("TdhGetProperty")
 )
 
-func getLengthFromProperty(event *eventRecordC, dataDescriptor *propertyDataDescriptor, length *uint32) error {
-	var propertySize uint32
+func getLengthFromProperty(event *eventRecordC, dataDescriptor *propertyDataDescriptor) (uint32, error) {
+	var propertySize, length uint32
 
 	status, _, _ := tdhGetPropertySize.Call(
 		uintptr(unsafe.Pointer(event)),
@@ -358,7 +358,7 @@ func getLengthFromProperty(event *eventRecordC, dataDescriptor *propertyDataDesc
 	)
 
 	if windows.Errno(status) != windows.ERROR_SUCCESS {
-		return windows.Errno(status)
+		return 0, windows.Errno(status)
 	}
 	status, _, _ = tdhGetProperty.Call(
 		uintptr(unsafe.Pointer(event)),
@@ -367,25 +367,24 @@ func getLengthFromProperty(event *eventRecordC, dataDescriptor *propertyDataDesc
 		1,
 		uintptr(unsafe.Pointer(dataDescriptor)),
 		uintptr(unsafe.Pointer(&propertySize)),
-		uintptr(unsafe.Pointer(length)),
+		uintptr(unsafe.Pointer(&length)),
 	)
 	if windows.Errno(status) != windows.ERROR_SUCCESS {
-		return windows.Errno(status)
+		return 0, windows.Errno(status)
 	}
-	return nil
+	return length, nil
 }
 
-func getArraySize(event *eventRecordC, info *traceEventInfoC, i int, count *uint32) error {
+func getArraySize(event *eventRecordC, info *traceEventInfoC, i int) (uint32, error) {
 	if (info.EventPropertyInfoArray[i].Flags & propertyParamCount) == propertyParamCount {
 		var dataDescriptor propertyDataDescriptor
 		// Use the countPropertyIndex member of the EVENT_PROPERTY_INFO structure
 		// to locate the property that contains the size of the array.
 		dataDescriptor.PropertyName = getPropertyName(info, int(info.EventPropertyInfoArray[i].countPropertyIndex()))
 		dataDescriptor.ArrayIndex = 0xFFFFFFFF
-		return getLengthFromProperty(event, &dataDescriptor, count)
+		return getLengthFromProperty(event, &dataDescriptor)
 	} else {
-		*count = uint32(info.EventPropertyInfoArray[i].count())
-		return nil
+		return uint32(info.EventPropertyInfoArray[i].count()), nil
 	}
 }
 
@@ -394,8 +393,8 @@ func getArraySize(event *eventRecordC, info *traceEventInfoC, i int, count *uint
 // N.B. getPropertyValue HIGHLY depends not only on @i but also on memory
 // offsets, so check twice calling with non-sequential indexes.
 func (p *propertyParser) getPropertyValue(i int) (interface{}, error) {
-	var arraySize uint32
-	if err := getArraySize(p.record, p.info, i, &arraySize); err != nil {
+	arraySize, err := getArraySize(p.record, p.info, i)
+	if err != nil {
 		return nil, fmt.Errorf("failed to get array size; %w", err)
 	}
 
@@ -462,8 +461,7 @@ func (p *propertyParser) parseSimpleType(i int) (string, error) {
 		}
 	}
 
-	var propertyLength uint32
-	err := getPropertyLength(p.record, p.info, i, &propertyLength)
+	propertyLength, err := getPropertyLength(p.record, p.info, i)
 	if err != nil {
 		return "", fmt.Errorf("failed to get property length; %w", err)
 	}
@@ -610,14 +608,14 @@ func createUTF16String(ptr unsafe.Pointer, length int) string {
 // If the length is available, retrieve it here. In some cases, the length is 0.
 // This can signify that we are dealing with a variable length field such as a structure
 // or a string.
-func getPropertyLength(event *eventRecordC, info *traceEventInfoC, i int, propertyLength *uint32) error {
+func getPropertyLength(event *eventRecordC, info *traceEventInfoC, i int) (uint32, error) {
 	// If the property is a binary blob it can point to another property that defines the
 	// blob's size. The PropertyParamLength flag tells you where the blob's size is defined.
 	if (info.EventPropertyInfoArray[i].Flags & propertyParamLength) == propertyParamLength {
 		var dataDescriptor propertyDataDescriptor
 		dataDescriptor.PropertyName = getPropertyName(info, int(info.EventPropertyInfoArray[i].lengthPropertyIndex()))
 		dataDescriptor.ArrayIndex = 0xFFFFFFFF
-		return getLengthFromProperty(event, &dataDescriptor, propertyLength)
+		return getLengthFromProperty(event, &dataDescriptor)
 	}
 
 	// If the property is an IP V6 address, you must set the PropertyLength parameter to the size
@@ -626,15 +624,13 @@ func getPropertyLength(event *eventRecordC, info *traceEventInfoC, i int, proper
 	inType := info.EventPropertyInfoArray[i].nonStructType.InType
 	outType := info.EventPropertyInfoArray[i].nonStructType.OutType
 	if TdhIntypeBinary == inType && TdhOuttypeIpv6 == outType {
-		*propertyLength = 16
-		return nil
+		return 16, nil
 	}
 
 	// If no special cases handled -- just return the length defined if the info.
 	// In some cases, the length is 0. This can signify that we are dealing with a variable
 	// length field such as a structure or a string.
-	*propertyLength = uint32(info.EventPropertyInfoArray[i].length())
-	return nil
+	return uint32(info.EventPropertyInfoArray[i].length()), nil
 }
 
 const (

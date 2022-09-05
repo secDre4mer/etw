@@ -376,16 +376,16 @@ func getLengthFromProperty(event *eventRecordC, dataDescriptor *propertyDataDesc
 	return length, nil
 }
 
-func getArraySize(event *eventRecordC, info *traceEventInfoC, i int) (uint32, error) {
-	if (info.EventPropertyInfoArray[i].Flags & propertyParamCount) == propertyParamCount {
+func (p *propertyParser) getArraySize(propertyInfo eventPropertyInfoC) (uint32, error) {
+	if (propertyInfo.Flags & propertyParamCount) == propertyParamCount {
 		var dataDescriptor propertyDataDescriptor
 		// Use the countPropertyIndex member of the EVENT_PROPERTY_INFO structure
 		// to locate the property that contains the size of the array.
-		dataDescriptor.PropertyName = getPropertyName(info, int(info.EventPropertyInfoArray[i].countPropertyIndex()))
+		dataDescriptor.PropertyName = getPropertyName(p.info, int(propertyInfo.countPropertyIndex()))
 		dataDescriptor.ArrayIndex = 0xFFFFFFFF
-		return getLengthFromProperty(event, &dataDescriptor)
+		return getLengthFromProperty(p.record, &dataDescriptor)
 	} else {
-		return uint32(info.EventPropertyInfoArray[i].count()), nil
+		return uint32(propertyInfo.count()), nil
 	}
 }
 
@@ -394,7 +394,9 @@ func getArraySize(event *eventRecordC, info *traceEventInfoC, i int) (uint32, er
 // N.B. getPropertyValue HIGHLY depends not only on @i but also on memory
 // offsets, so check twice calling with non-sequential indexes.
 func (p *propertyParser) getPropertyValue(i int) (interface{}, error) {
-	arraySize, err := getArraySize(p.record, p.info, i)
+	propertyInfo := p.info.EventPropertyInfoArray[i]
+
+	arraySize, err := p.getArraySize(propertyInfo)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get array size; %w", err)
 	}
@@ -407,27 +409,27 @@ func (p *propertyParser) getPropertyValue(i int) (interface{}, error) {
 		)
 		// Note that we pass same idx to parse function. Actual returned values are controlled
 		// by data pointers offsets.
-		if p.info.EventPropertyInfoArray[i].Flags&propertyStruct == propertyStruct {
-			value, err = p.parseStruct(i)
+		if propertyInfo.Flags&propertyStruct == propertyStruct {
+			value, err = p.parseStruct(propertyInfo)
 		} else {
-			value, err = p.parseSimpleType(i)
+			value, err = p.parseSimpleType(propertyInfo)
 		}
 		if err != nil {
 			return nil, err
 		}
 		result[j] = value
 	}
-	if ((p.info.EventPropertyInfoArray[i].Flags & propertyParamCount) == propertyParamCount) ||
-		(p.info.EventPropertyInfoArray[i].count() > 1) {
+	if ((propertyInfo.Flags & propertyParamCount) == propertyParamCount) ||
+		(propertyInfo.count() > 1) {
 		return result, nil
 	}
 	return result[0], nil
 }
 
 // parseStruct tries to extract fields of embedded structure at property @i.
-func (p *propertyParser) parseStruct(i int) (map[string]interface{}, error) {
-	startIndex := p.info.EventPropertyInfoArray[i].structType().StructStartIndex
-	lastIndex := startIndex + p.info.EventPropertyInfoArray[i].structType().NumOfStructMembers
+func (p *propertyParser) parseStruct(propertyInfo eventPropertyInfoC) (map[string]interface{}, error) {
+	startIndex := propertyInfo.structType().StructStartIndex
+	lastIndex := startIndex + propertyInfo.structType().NumOfStructMembers
 
 	structure := make(map[string]interface{}, lastIndex-startIndex)
 	for j := startIndex; j < lastIndex; j++ {
@@ -452,23 +454,23 @@ var (
 
 // parseSimpleType wraps TdhFormatProperty to get rendered to string value of
 // @i-th event property.
-func (p *propertyParser) parseSimpleType(i int) (string, error) {
+func (p *propertyParser) parseSimpleType(propertyInfo eventPropertyInfoC) (string, error) {
 	var mapInfo unsafe.Pointer
 	if !p.ignoreMapInfo {
 		var err error
-		mapInfo, err = getMapInfo(p.record, p.info, i)
+		mapInfo, err = p.getMapInfo(propertyInfo)
 		if err != nil {
 			return "", fmt.Errorf("failed to get map info; %w", err)
 		}
 	}
 
-	propertyLength, err := getPropertyLength(p.record, p.info, i)
+	propertyLength, err := p.getPropertyLength(propertyInfo)
 	if err != nil {
 		return "", fmt.Errorf("failed to get property length; %w", err)
 	}
 
-	inType := p.info.EventPropertyInfoArray[i].nonStructType.InType
-	outType := p.info.EventPropertyInfoArray[i].nonStructType.OutType
+	inType := propertyInfo.nonStructType.InType
+	outType := propertyInfo.nonStructType.OutType
 
 	var userDataConsumed int
 
@@ -527,13 +529,13 @@ var (
 // getMapInfo retrieve the mapping between the @i-th field and the structure it represents.
 // If that mapping exists, function extracts it and returns a pointer to the buffer with
 // extracted info. If no mapping defined, function can legitimately return `nil, nil`.
-func getMapInfo(event *eventRecordC, info *traceEventInfoC, i int) (unsafe.Pointer, error) {
-	mapName := unsafe.Add(unsafe.Pointer(info), info.EventPropertyInfoArray[i].nonStructType.MapNameOffset)
+func (p *propertyParser) getMapInfo(propertyInfo eventPropertyInfoC) (unsafe.Pointer, error) {
+	mapName := unsafe.Add(unsafe.Pointer(p.info), propertyInfo.nonStructType.MapNameOffset)
 
 	// Query map info if any exists.
 	var mapSize uint32
 	ret, _, _ := tdhGetEventMapInformation.Call(
-		uintptr(unsafe.Pointer(event)),
+		uintptr(unsafe.Pointer(p.record)),
 		uintptr(mapName),
 		0,
 		uintptr(unsafe.Pointer(&mapSize)),
@@ -550,7 +552,7 @@ func getMapInfo(event *eventRecordC, info *traceEventInfoC, i int) (unsafe.Point
 	// Get the info itself.
 	mapInfo := make([]byte, int(mapSize))
 	ret, _, _ = tdhGetEventMapInformation.Call(
-		uintptr(unsafe.Pointer(event)),
+		uintptr(unsafe.Pointer(p.record)),
 		uintptr(mapName),
 		uintptr(unsafe.Pointer(&mapInfo[0])),
 		uintptr(unsafe.Pointer(&mapSize)),
@@ -610,21 +612,21 @@ func createUTF16String(ptr unsafe.Pointer, length int) string {
 // If the length is available, retrieve it here. In some cases, the length is 0.
 // This can signify that we are dealing with a variable length field such as a structure
 // or a string.
-func getPropertyLength(event *eventRecordC, info *traceEventInfoC, i int) (uint32, error) {
+func (p *propertyParser) getPropertyLength(propertyInfo eventPropertyInfoC) (uint32, error) {
 	// If the property is a binary blob it can point to another property that defines the
 	// blob's size. The PropertyParamLength flag tells you where the blob's size is defined.
-	if (info.EventPropertyInfoArray[i].Flags & propertyParamLength) == propertyParamLength {
+	if (propertyInfo.Flags & propertyParamLength) == propertyParamLength {
 		var dataDescriptor propertyDataDescriptor
-		dataDescriptor.PropertyName = getPropertyName(info, int(info.EventPropertyInfoArray[i].lengthPropertyIndex()))
+		dataDescriptor.PropertyName = getPropertyName(p.info, int(propertyInfo.lengthPropertyIndex()))
 		dataDescriptor.ArrayIndex = 0xFFFFFFFF
-		return getLengthFromProperty(event, &dataDescriptor)
+		return getLengthFromProperty(p.record, &dataDescriptor)
 	}
 
 	// If the property is an IP V6 address, you must set the PropertyLength parameter to the size
 	// of the IN6_ADDR structure:
 	// https://docs.microsoft.com/en-us/windows/win32/api/tdh/nf-tdh-tdhformatproperty#remarks
-	inType := info.EventPropertyInfoArray[i].nonStructType.InType
-	outType := info.EventPropertyInfoArray[i].nonStructType.OutType
+	inType := propertyInfo.nonStructType.InType
+	outType := propertyInfo.nonStructType.OutType
 	if TdhIntypeBinary == inType && TdhOuttypeIpv6 == outType {
 		return 16, nil
 	}
@@ -632,7 +634,7 @@ func getPropertyLength(event *eventRecordC, info *traceEventInfoC, i int) (uint3
 	// If no special cases handled -- just return the length defined if the info.
 	// In some cases, the length is 0. This can signify that we are dealing with a variable
 	// length field such as a structure or a string.
-	return uint32(info.EventPropertyInfoArray[i].length()), nil
+	return uint32(propertyInfo.length()), nil
 }
 
 const (

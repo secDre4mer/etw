@@ -6,6 +6,7 @@ package etw
 import (
 	"fmt"
 	"sync"
+	"syscall"
 	"time"
 	"unicode/utf16"
 	"unsafe"
@@ -476,7 +477,8 @@ func (p *propertyParser) parseSimpleType(i int) (string, error) {
 
 retryLoop:
 	for {
-		r0, _, _ := tdhFormatProperty.Call(
+		r0, _, _ := syscall.SyscallN(
+			tdhFormatProperty.Addr(),
 			uintptr(unsafe.Pointer(p.record)),
 			uintptr(mapInfo),
 			p.ptrSize,

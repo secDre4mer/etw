@@ -260,9 +260,7 @@ func (p Provider) ListEvents() ([]EventDescriptor, error) {
 	}
 	eventInfo := (*providerEventInfo)(unsafe.Pointer(&buffer[0]))
 	var descriptors = make([]EventDescriptor, eventInfo.NumberOfEvents)
-	for i, descriptor := range eventInfo.descriptors[:eventInfo.NumberOfEvents] {
-		descriptors[i] = eventDescriptorToGo(descriptor)
-	}
+	copy(descriptors, eventInfo.descriptors[:eventInfo.NumberOfEvents])
 	return descriptors, nil
 }
 
@@ -270,5 +268,5 @@ func (p Provider) ListEvents() ([]EventDescriptor, error) {
 type providerEventInfo struct {
 	NumberOfEvents uint32
 	_              uint32
-	descriptors    [anysizeArray]C.EVENT_DESCRIPTOR
+	descriptors    [anysizeArray]EventDescriptor
 }

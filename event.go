@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sync"
 	"time"
+	"unicode/utf16"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -572,12 +573,37 @@ func getMapInfo(event *eventRecordC, info *traceEventInfoC, i int) (unsafe.Point
 // So the recommended way is "a fake cast" to the array with maximal len
 // with a following slicing.
 // Ref: https://github.com/golang/go/wiki/cgo#turning-c-arrays-into-go-slices
-func createUTF16String(ptr unsafe.Pointer, len int) string {
-	if len == 0 {
+func createUTF16String(ptr unsafe.Pointer, length int) string {
+	if length == 0 {
 		return ""
 	}
-	bytes := (*[anysizeArray]uint16)(ptr)[:len:len]
-	return windows.UTF16ToString(bytes)
+	chars := (*[anysizeArray]uint16)(ptr)[:length:length]
+
+	// Detect actual length of UTF-16 zero terminated string
+	var fastEncode = true
+	for i, v := range chars {
+		if v == 0 {
+			chars = chars[0:i]
+			break
+		}
+		if v >= 0x800 {
+			fastEncode = false
+		}
+	}
+	if fastEncode {
+		// Optimized variant for simple texts
+		var bytes = make([]byte, 0, len(chars)*2)
+		for _, v := range chars {
+			// Encoding for UTF-8, see https://en.wikipedia.org/wiki/UTF-8#Encoding
+			if v < 0x80 {
+				bytes = append(bytes, uint8(v))
+			} else {
+				bytes = append(bytes, 0b11000000&uint8(v>>6), 0b10000000&uint8(v))
+			}
+		}
+		return *(*string)(unsafe.Pointer(&bytes))
+	}
+	return string(utf16.Decode(chars))
 }
 
 // getPropertyLength returns an associated length of the @j-th property of @pInfo.

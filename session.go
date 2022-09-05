@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -521,16 +522,32 @@ func (s *Session) unsubscribeFromProviders() error {
 	return lastError
 }
 
+var (
+	openTrace = advapi32.NewProc("OpenTraceW")
+)
+
 // processEvents subscribes to the actual provider events and starts its processing.
 func (s *Session) processEvents(callbackContextKey uintptr) error {
 	// Ref: https://docs.microsoft.com/en-us/windows/win32/api/evntrace/nf-evntrace-opentracew
-	traceHandle := C.OpenTraceHelper(
-		(C.LPWSTR)(unsafe.Pointer(&s.etwSessionName[0])),
-		(C.PVOID)(callbackContextKey),
-		C.uintptr_t(handleEventStdcall),
+	var trace eventTraceLogfile
+	trace.LoggerName = &s.etwSessionName[0]
+	trace.Context = callbackContextKey
+	trace.ProcessTraceMode = processTraceModeRealTime | processTraceModeEventRecord
+	trace.EventCallback = handleEventStdcall
+
+	r1, r2, err := openTrace.Call(
+		uintptr(unsafe.Pointer(&trace)),
 	)
+	var traceHandle C.TRACEHANDLE
+	if runtime.GOARCH == "386" {
+		// On 32 bit, r2 contains the upper 32 bits of a 64 bit return value, see
+		// https://stackoverflow.com/questions/38738534/what-is-the-second-r2-return-value-in-gos-syscall-for
+		traceHandle = C.TRACEHANDLE(r1) + (C.TRACEHANDLE(r2) << 32)
+	} else {
+		traceHandle = C.TRACEHANDLE(r1)
+	}
 	if C.INVALID_PROCESSTRACE_HANDLE == traceHandle {
-		return fmt.Errorf("OpenTraceW failed; %w", windows.GetLastError())
+		return fmt.Errorf("OpenTraceW failed; %w", err)
 	}
 
 	// BLOCKS UNTIL CLOSED!
@@ -543,7 +560,7 @@ func (s *Session) processEvents(callbackContextKey uintptr) error {
 	// 	LPFILETIME   EndTime
 	// );
 	ret := C.ProcessTrace(
-		C.PTRACEHANDLE(&traceHandle),
+		&traceHandle,
 		1,   // ^ Imagine we pass an array with 1 element here.
 		nil, // Do not want to limit StartTime (default is from now).
 		nil, // Do not want to limit EndTime.

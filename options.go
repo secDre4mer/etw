@@ -1,15 +1,7 @@
-//+build windows
+//go:build windows
+// +build windows
 
 package etw
-
-/*
-#undef _WIN32_WINNT
-#define _WIN32_WINNT _WIN32_WINNT_WIN7
-
-#include "windows.h"
-#include <evntrace.h>
-*/
-import "C"
 
 // SessionOptions describes Session subscription options.
 //
@@ -72,7 +64,6 @@ func EnableLogModes(modes ...LogFileMode) SessionOption {
 }
 
 // ProviderOptions describes subscription options for a single provider.
-//
 type ProviderOptions struct {
 	// Level represents provider-defined value that specifies the level of
 	// detail included in the event. Higher levels imply that you get lower
@@ -148,7 +139,8 @@ func WithLevel(lvl TraceLevel) ProviderOption {
 //
 // For more info take a look a ProviderOptions docs. To query keywords defined
 // by specific provider identified by <GUID> try:
-//     logman query providers <GUID>
+//
+//	logman query providers <GUID>
 func WithMatchKeywords(anyKeyword, allKeyword uint64) ProviderOption {
 	return func(cfg *ProviderOptions) {
 		cfg.MatchAnyKeyword = anyKeyword
@@ -188,7 +180,7 @@ func WithRundown(withRundown bool) ProviderOption {
 // TraceLevel represents provider-defined value that specifies the level of
 // detail included in the event. Higher levels imply that you get lower
 // levels as well.
-type TraceLevel C.UCHAR
+type TraceLevel uint8
 
 //nolint:golint,stylecheck // We keep original names to underline that it's an external constants.
 const (
@@ -203,7 +195,7 @@ const (
 //
 // For more info about available properties check original API reference:
 // https://docs.microsoft.com/en-us/windows/win32/api/evntrace/ns-evntrace-enable_trace_parameters
-type EnableProperty C.ULONG
+type EnableProperty uint32
 
 //nolint:golint,stylecheck // We keep original names to underline that it's an external constants.
 const (
@@ -229,36 +221,40 @@ const (
 	EVENT_ENABLE_PROPERTY_EXCLUDE_INPRIVATE = EnableProperty(0x200)
 )
 
-type EnableFlag C.ULONG
+type EnableFlag uint32
 
 const (
-	EVENT_TRACE_FLAG_ALPC               = EnableFlag(C.EVENT_TRACE_FLAG_ALPC)
-	EVENT_TRACE_FLAG_CSWITCH            = EnableFlag(C.EVENT_TRACE_FLAG_CSWITCH)
-	EVENT_TRACE_FLAG_DBGPRINT           = EnableFlag(C.EVENT_TRACE_FLAG_DBGPRINT)
-	EVENT_TRACE_FLAG_DISK_FILE_IO       = EnableFlag(C.EVENT_TRACE_FLAG_DISK_FILE_IO)
-	EVENT_TRACE_FLAG_DISK_IO            = EnableFlag(C.EVENT_TRACE_FLAG_DISK_IO)
-	EVENT_TRACE_FLAG_DISK_IO_INIT       = EnableFlag(C.EVENT_TRACE_FLAG_DISK_IO_INIT)
-	EVENT_TRACE_FLAG_DISPATCHER         = EnableFlag(C.EVENT_TRACE_FLAG_DISPATCHER)
-	EVENT_TRACE_FLAG_DPC                = EnableFlag(C.EVENT_TRACE_FLAG_DPC)
-	EVENT_TRACE_FLAG_DRIVER             = EnableFlag(C.EVENT_TRACE_FLAG_DRIVER)
-	EVENT_TRACE_FLAG_FILE_IO            = EnableFlag(C.EVENT_TRACE_FLAG_FILE_IO)
-	EVENT_TRACE_FLAG_FILE_IO_INIT       = EnableFlag(C.EVENT_TRACE_FLAG_FILE_IO_INIT)
-	EVENT_TRACE_FLAG_IMAGE_LOAD         = EnableFlag(C.EVENT_TRACE_FLAG_IMAGE_LOAD)
-	EVENT_TRACE_FLAG_INTERRUPT          = EnableFlag(C.EVENT_TRACE_FLAG_INTERRUPT)
-	EVENT_TRACE_FLAG_JOB                = EnableFlag(0x00080000)
-	EVENT_TRACE_FLAG_MEMORY_HARD_FAULTS = EnableFlag(C.EVENT_TRACE_FLAG_MEMORY_HARD_FAULTS)
-	EVENT_TRACE_FLAG_MEMORY_PAGE_FAULTS = EnableFlag(C.EVENT_TRACE_FLAG_MEMORY_PAGE_FAULTS)
-	EVENT_TRACE_FLAG_NETWORK_TCPIP      = EnableFlag(C.EVENT_TRACE_FLAG_NETWORK_TCPIP)
-	EVENT_TRACE_FLAG_NO_SYSCONFIG       = EnableFlag(C.EVENT_TRACE_FLAG_NO_SYSCONFIG)
-	EVENT_TRACE_FLAG_PROCESS            = EnableFlag(C.EVENT_TRACE_FLAG_PROCESS)
-	EVENT_TRACE_FLAG_PROCESS_COUNTERS   = EnableFlag(C.EVENT_TRACE_FLAG_PROCESS_COUNTERS)
-	EVENT_TRACE_FLAG_PROFILE            = EnableFlag(C.EVENT_TRACE_FLAG_PROFILE)
-	EVENT_TRACE_FLAG_REGISTRY           = EnableFlag(C.EVENT_TRACE_FLAG_REGISTRY)
-	EVENT_TRACE_FLAG_SPLIT_IO           = EnableFlag(C.EVENT_TRACE_FLAG_SPLIT_IO)
-	EVENT_TRACE_FLAG_SYSTEMCALL         = EnableFlag(C.EVENT_TRACE_FLAG_SYSTEMCALL)
-	EVENT_TRACE_FLAG_THREAD             = EnableFlag(C.EVENT_TRACE_FLAG_THREAD)
-	EVENT_TRACE_FLAG_VAMAP              = EnableFlag(C.EVENT_TRACE_FLAG_VAMAP)
-	EVENT_TRACE_FLAG_VIRTUAL_ALLOC      = EnableFlag(C.EVENT_TRACE_FLAG_VIRTUAL_ALLOC)
+	EVENT_TRACE_FLAG_PROCESS            EnableFlag = 0x00000001
+	EVENT_TRACE_FLAG_THREAD             EnableFlag = 0x00000002
+	EVENT_TRACE_FLAG_IMAGE_LOAD         EnableFlag = 0x00000004
+	EVENT_TRACE_FLAG_DISK_IO            EnableFlag = 0x00000100
+	EVENT_TRACE_FLAG_DISK_FILE_IO       EnableFlag = 0x00000200
+	EVENT_TRACE_FLAG_MEMORY_PAGE_FAULTS EnableFlag = 0x00001000
+	EVENT_TRACE_FLAG_MEMORY_HARD_FAULTS EnableFlag = 0x00002000
+	EVENT_TRACE_FLAG_NETWORK_TCPIP      EnableFlag = 0x00010000
+	EVENT_TRACE_FLAG_REGISTRY           EnableFlag = 0x00020000
+	EVENT_TRACE_FLAG_DBGPRINT           EnableFlag = 0x00040000
+	EVENT_TRACE_FLAG_PROCESS_COUNTERS   EnableFlag = 0x00000008
+	EVENT_TRACE_FLAG_CSWITCH            EnableFlag = 0x00000010
+	EVENT_TRACE_FLAG_DPC                EnableFlag = 0x00000020
+	EVENT_TRACE_FLAG_INTERRUPT          EnableFlag = 0x00000040
+	EVENT_TRACE_FLAG_SYSTEMCALL         EnableFlag = 0x00000080
+	EVENT_TRACE_FLAG_DISK_IO_INIT       EnableFlag = 0x00000400
+	EVENT_TRACE_FLAG_ALPC               EnableFlag = 0x00100000
+	EVENT_TRACE_FLAG_SPLIT_IO           EnableFlag = 0x00200000
+	EVENT_TRACE_FLAG_DRIVER             EnableFlag = 0x00800000
+	EVENT_TRACE_FLAG_PROFILE            EnableFlag = 0x01000000
+	EVENT_TRACE_FLAG_FILE_IO            EnableFlag = 0x02000000
+	EVENT_TRACE_FLAG_FILE_IO_INIT       EnableFlag = 0x04000000
+	EVENT_TRACE_FLAG_DISPATCHER         EnableFlag = 0x00000800
+	EVENT_TRACE_FLAG_VIRTUAL_ALLOC      EnableFlag = 0x00004000
+	EVENT_TRACE_FLAG_VAMAP              EnableFlag = 0x00008000
+	EVENT_TRACE_FLAG_NO_SYSCONFIG       EnableFlag = 0x10000000
+	EVENT_TRACE_FLAG_JOB                EnableFlag = 0x00080000
+	EVENT_TRACE_FLAG_DEBUG_EVENTS       EnableFlag = 0x00400000
+	EVENT_TRACE_FLAG_EXTENSION          EnableFlag = 0x80000000
+	EVENT_TRACE_FLAG_FORWARD_WMI        EnableFlag = 0x40000000
+	EVENT_TRACE_FLAG_ENABLE_RESERVE     EnableFlag = 0x20000000
 
 	EVENT_TRACE_FLAG_OBTRACE EnableFlag = 0x80000040
 
@@ -272,12 +268,12 @@ var traceSetInformationFlags = map[EnableFlag]bool{
 	EVENT_TRACE_FLAG_OBTRACE: true,
 }
 
-type LogFileMode C.ULONG
+type LogFileMode uint32
 
 const (
 	// EVENT_TRACE_SECURE_MODE specifies that secure mode should be enabled on the session.
 	// This restricts who may log events to the session.
-	EVENT_TRACE_SECURE_MODE = LogFileMode(C.EVENT_TRACE_SECURE_MODE)
+	EVENT_TRACE_SECURE_MODE = LogFileMode(0x00000080)
 
 	// EVENT_TRACE_SYSTEM_LOGGER_MODE specifies that the session will receive events from the
 	// SystemTraceProvider.
@@ -286,4 +282,9 @@ const (
 	// EVENT_TRACE_INDEPENDENT_SESSION_MODE specifies that this session should not be affected
 	// by failures in other ETW sessions.
 	EVENT_TRACE_INDEPENDENT_SESSION_MODE = LogFileMode(0x08000000)
+)
+
+const (
+	// kernelLoggerName is the name of the kernel logging ETW session that exists on older machines.
+	kernelLoggerName = "NT Kernel Logger"
 )

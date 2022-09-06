@@ -11,30 +11,16 @@
 // https://github.com/bi-zone/etw/tree/master/examples
 package etw
 
-/*
-	#cgo LDFLAGS: -ltdh
-
-	#include "session.h"
-*/
-import "C"
 import (
 	"fmt"
 	"math"
 	"math/rand"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
-)
-
-var (
-	advapi32 = windows.NewLazySystemDLL("advapi32.dll")
-
-	traceSetInformation   = advapi32.NewProc("TraceSetInformation")
-	traceQueryInformation = advapi32.NewProc("TraceQueryInformation")
 )
 
 // ExistsError is returned by NewSession if the session name is already taken.
@@ -65,7 +51,7 @@ type Session struct {
 	callback EventCallback
 
 	etwSessionName []uint16
-	hSession       C.TRACEHANDLE
+	hSession       uint64
 	propertiesBuf  []byte
 
 	processedEvents uint64
@@ -145,11 +131,11 @@ func (s *Session) AddProvider(providerGUID windows.GUID, options ...ProviderOpti
 func (s *Session) Process(cb EventCallback) error {
 	s.callback = cb
 
-	cgoKey := newCallbackKey(s)
-	defer freeCallbackKey(cgoKey)
+	callbackKey := newCallbackKey(s)
+	defer freeCallbackKey(callbackKey)
 
 	// Will block here until being closed.
-	if err := s.processEvents(cgoKey); err != nil {
+	if err := s.processEvents(callbackKey); err != nil {
 		return fmt.Errorf("error processing events; %w", err)
 	}
 	return nil
@@ -187,6 +173,14 @@ func (s *Session) Close() error {
 	return nil
 }
 
+const (
+	eventTraceControlQuery         = 0
+	eventTraceControlStop          = 1
+	eventTraceControlUpdate        = 2
+	eventTraceControlFlush         = 3
+	eventTraceControlIncrementFile = 4
+)
+
 // KillSession forces the session with a given @name to stop. Don't having a
 // session handle we can't shutdown it gracefully unsubscribing from all the
 // providers first, so we just stop the session itself.
@@ -209,43 +203,40 @@ func KillSession(name string) error {
 	// We don't know if this session was opened with the log file or not
 	// (session could be opened without our library) so allocate memory for LogFile name too.
 	const maxLengthLogfileName = 1024
-	bufSize := int(unsafe.Sizeof(C.EVENT_TRACE_PROPERTIES{})) + sessionNameLength + maxLengthLogfileName
+	bufSize := int(unsafe.Sizeof(eventTraceProperties{})) + sessionNameLength + maxLengthLogfileName
 	propertiesBuf := make([]byte, bufSize)
-	pProperties := (C.PEVENT_TRACE_PROPERTIES)(unsafe.Pointer(&propertiesBuf[0]))
-	pProperties.Wnode.BufferSize = C.ulong(bufSize)
+	pProperties := (*eventTraceProperties)(unsafe.Pointer(&propertiesBuf[0]))
+	pProperties.Wnode.BufferSize = uint32(bufSize)
 
-	// ULONG WMIAPI ControlTraceW(
-	//  TRACEHANDLE             TraceHandle,
-	//  LPCWSTR                 InstanceName,
-	//  PEVENT_TRACE_PROPERTIES Properties,
-	//  ULONG                   ControlCode
-	// );
-	ret := C.ControlTraceW(
+	err = controlTrace(
 		0,
-		(*C.ushort)(unsafe.Pointer(&nameUTF16[0])),
+		&nameUTF16[0],
 		pProperties,
-		C.EVENT_TRACE_CONTROL_STOP)
+		eventTraceControlStop,
+	)
 
 	// If you receive ERROR_MORE_DATA when stopping the session, ETW will have
 	// already stopped the session before generating this error.
 	// https://docs.microsoft.com/en-us/windows/win32/api/evntrace/nf-evntrace-controltracew
-	switch status := windows.Errno(ret); status {
-	case windows.ERROR_MORE_DATA, windows.ERROR_SUCCESS:
-		return nil
-	default:
-		return status
+	if err == windows.ERROR_MORE_DATA {
+		err = nil
 	}
+	return err
 }
 
+const (
+	eventTraceRealTimeMode = 0x00000100
+)
+
 func (s *Session) generateTraceProperties(config SessionOptions) []byte {
-	var logFileMode C.ULONG
+	var logFileMode uint32
 	for _, mode := range config.LogFileModes {
 		if !(mode == EVENT_TRACE_SYSTEM_LOGGER_MODE && getWindowsVersion() <= windows7) {
-			logFileMode |= C.ULONG(mode)
+			logFileMode |= uint32(mode)
 		}
 	}
 	// Mark that we are going to process events in real time using a callback.
-	logFileMode |= C.EVENT_TRACE_REAL_TIME_MODE
+	logFileMode |= eventTraceRealTimeMode
 
 	// We need to allocate a sequential buffer for a structure and a session name
 	// which will be placed there by an API call (for the future calls).
@@ -254,7 +245,7 @@ func (s *Session) generateTraceProperties(config SessionOptions) []byte {
 	//
 	// The only way to do it in go -- unsafe cast of the allocated memory.
 	sessionNameSize := len(s.etwSessionName) * int(unsafe.Sizeof(s.etwSessionName[0]))
-	bufSize := int(unsafe.Sizeof(C.EVENT_TRACE_PROPERTIES{})) + sessionNameSize
+	bufSize := int(unsafe.Sizeof(eventTraceProperties{})) + sessionNameSize
 	propertiesBuf := make([]byte, bufSize)
 
 	// We will use Query Performance Counter for timestamp cos it gives us higher
@@ -262,17 +253,17 @@ func (s *Session) generateTraceProperties(config SessionOptions) []byte {
 	// FileTime due to absence of PROCESS_TRACE_MODE_RAW_TIMESTAMP in LogFileMode.
 	//
 	// Ref: https://docs.microsoft.com/en-us/windows/win32/api/evntrace/ns-evntrace-event_trace_properties
-	pProperties := (C.PEVENT_TRACE_PROPERTIES)(unsafe.Pointer(&propertiesBuf[0]))
-	pProperties.Wnode.BufferSize = C.ulong(bufSize)
+	pProperties := (*eventTraceProperties)(unsafe.Pointer(&propertiesBuf[0]))
+	pProperties.Wnode.BufferSize = uint32(bufSize)
 	pProperties.Wnode.ClientContext = 1 // QPC for event Timestamp
-	pProperties.Wnode.Flags = C.WNODE_FLAG_TRACED_GUID
+	pProperties.Wnode.Flags = wnodeFlagTracedGuid
 
 	pProperties.LogFileMode = logFileMode
 
-	var enableFlags C.ULONG
+	var enableFlags uint32
 	for _, flag := range config.Flags {
 		if !traceSetInformationFlags[flag] {
-			enableFlags |= C.ULONG(flag)
+			enableFlags |= uint32(flag)
 		}
 	}
 	pProperties.EnableFlags = enableFlags
@@ -290,24 +281,19 @@ func (s *Session) createETWSession() error {
 		if mode == EVENT_TRACE_SYSTEM_LOGGER_MODE && getWindowsVersion() <= windows7 {
 			// We are on Windows 7 or older. These versions do not support EVENT_TRACE_SYSTEM_LOGGER_MODE
 			// and instead requires usage of the global kernel logger session.
-			s.etwSessionName, _ = windows.UTF16FromString(C.KERNEL_LOGGER_NAME)
+			s.etwSessionName, _ = windows.UTF16FromString(kernelLoggerName)
 		}
 	}
 	propertiesBuf := s.generateTraceProperties(s.config)
 
-	ret := C.StartTraceW(
-		&s.hSession,
-		C.LPWSTR(unsafe.Pointer(&s.etwSessionName[0])),
-		C.PEVENT_TRACE_PROPERTIES(unsafe.Pointer(&propertiesBuf[0])),
-	)
-	switch err := windows.Errno(ret); err {
-	case windows.ERROR_ALREADY_EXISTS:
-		return ExistsError{SessionName: s.config.Name}
-	case windows.ERROR_SUCCESS:
-		s.propertiesBuf = propertiesBuf
-	default:
+	err = startTrace(&s.hSession, &s.etwSessionName[0], unsafe.Pointer(&propertiesBuf[0]))
+	if err != nil {
+		if err == windows.ERROR_ALREADY_EXISTS {
+			return ExistsError{SessionName: s.config.Name}
+		}
 		return fmt.Errorf("StartTraceW failed; %w", err)
 	}
+	s.propertiesBuf = propertiesBuf
 
 	if err := s.setEnableFlags(s.config.Flags); err != nil {
 		s.Close()
@@ -318,10 +304,10 @@ func (s *Session) createETWSession() error {
 
 func (s *Session) setEnableFlags(flags []EnableFlag) error {
 	var activateRundown bool
-	var traceSetInfoFlags C.ULONG
+	var traceSetInfoFlags uint32
 	for _, flag := range flags {
 		if traceSetInformationFlags[flag] {
-			traceSetInfoFlags |= C.ULONG(flag)
+			traceSetInfoFlags |= uint32(flag)
 		}
 		if flag == EVENT_TRACE_FLAG_RUNDOWN {
 			activateRundown = true
@@ -330,72 +316,66 @@ func (s *Session) setEnableFlags(flags []EnableFlag) error {
 	if traceSetInfoFlags == 0 && !activateRundown {
 		return nil
 	}
-	if err := traceSetInformation.Find(); err != nil {
-		return fmt.Errorf("TraceSetInformation is only supported on Windows 8+")
-	}
-	if err := traceQueryInformation.Find(); err != nil {
-		return fmt.Errorf("TraceQueryInformation is only supported on Windows 8+")
-	}
 	var masks perfinfoGroupmask
-	ret, _, _ := traceQueryInformation.Call(
-		uintptr(s.hSession),
-		uintptr(C.TraceSystemTraceEnableFlagsInfo),
-		uintptr(unsafe.Pointer(&masks)),
-		unsafe.Sizeof(masks),
-		0,
+	err := traceQueryInformation(
+		s.hSession,
+		traceSystemTraceEnableFlagsInfo,
+		unsafe.Pointer(&masks),
+		uint32(unsafe.Sizeof(masks)),
+		nil,
 	)
-	if err := windows.Errno(ret); err != windows.ERROR_SUCCESS {
+	if err != nil {
 		return fmt.Errorf("TraceQueryInformation failed; %w", err)
 	}
 	if activateRundown {
 		var emptyMask perfinfoGroupmask
-		ret, _, _ = traceSetInformation.Call(
-			uintptr(s.hSession),
-			uintptr(C.TraceSystemTraceEnableFlagsInfo),
-			uintptr(unsafe.Pointer(&emptyMask)),
-			unsafe.Sizeof(emptyMask),
+		err := traceSetInformation(
+			s.hSession,
+			traceSystemTraceEnableFlagsInfo,
+			unsafe.Pointer(&emptyMask),
+			uint32(unsafe.Sizeof(emptyMask)),
 		)
-		if err := windows.Errno(ret); err != windows.ERROR_SUCCESS {
+		if err != nil {
 			return fmt.Errorf("TraceSetInformation failed; %w", err)
 		}
 	}
 
 	masks[4] = traceSetInfoFlags
 
-	ret, _, _ = traceSetInformation.Call(
-		uintptr(s.hSession),
-		uintptr(C.TraceSystemTraceEnableFlagsInfo),
-		uintptr(unsafe.Pointer(&masks)),
-		unsafe.Sizeof(masks),
+	err = traceSetInformation(
+		s.hSession,
+		traceSystemTraceEnableFlagsInfo,
+		unsafe.Pointer(&masks),
+		uint32(unsafe.Sizeof(masks)),
 	)
-	if err := windows.Errno(ret); err != windows.ERROR_SUCCESS {
+	if err != nil {
 		return fmt.Errorf("TraceSetInformation failed; %w", err)
 	}
 	return nil
 }
 
-type perfinfoGroupmask [8]C.ULONG
+type perfinfoGroupmask [8]uint32
 
 func (s *Session) updateSessionProperties(config SessionOptions) error {
 	propertiesBuf := s.generateTraceProperties(config)
 
-	ret := C.ControlTraceW(
+	err := controlTrace(
 		s.hSession,
-		C.LPWSTR(unsafe.Pointer(&s.etwSessionName[0])),
-		C.PEVENT_TRACE_PROPERTIES(unsafe.Pointer(&propertiesBuf[0])),
-		C.EVENT_TRACE_CONTROL_UPDATE,
+		&s.etwSessionName[0],
+		(*eventTraceProperties)(unsafe.Pointer(&propertiesBuf[0])),
+		eventTraceControlUpdate,
 	)
-	if err := windows.Errno(ret); err != windows.ERROR_SUCCESS {
+	if err != nil {
 		return fmt.Errorf("ControlTraceW failed; %w", err)
 	}
 	if err := s.setEnableFlags(config.Flags); err != nil {
 		// Try to revert changes made with ControlTraceW
 		// by reverting to the old, stored propertiesBuf
-		C.ControlTraceW(
+		_ = controlTrace(
 			s.hSession,
-			C.LPWSTR(unsafe.Pointer(&s.etwSessionName[0])),
-			C.PEVENT_TRACE_PROPERTIES(unsafe.Pointer(&s.propertiesBuf[0])),
-			C.EVENT_TRACE_CONTROL_UPDATE,
+			&s.etwSessionName[0],
+			(*eventTraceProperties)(unsafe.Pointer(&propertiesBuf[0])),
+			eventTraceControlUpdate,
 		)
 		return fmt.Errorf("failed to set flags; %w", err)
 	}
@@ -404,14 +384,19 @@ func (s *Session) updateSessionProperties(config SessionOptions) error {
 	return nil
 }
 
+const (
+	eventControlCodeDisableProvider = 0
+	eventControlCodeEnableProvider  = 1
+	eventControlCodeCaptureState    = 2
+)
+
 // subscribeToProvider wraps EnableTraceEx2 with EVENT_CONTROL_CODE_ENABLE_PROVIDER.
 func (s *Session) subscribeToProvider(provider windows.GUID, options ProviderOptions) error {
 	// https://docs.microsoft.com/en-us/windows/win32/etw/configuring-and-starting-an-event-tracing-session
-	params := C.ENABLE_TRACE_PARAMETERS{
-		Version: 2, // ENABLE_TRACE_PARAMETERS_VERSION_2
-	}
+	var params enableTraceParameters
+	params.Version = 2 // ENABLE_TRACE_PARAMETERS_VERSION_2
 	for _, p := range options.EnableProperties {
-		params.EnableProperty |= C.ULONG(p)
+		params.EnableProperty |= uint32(p)
 	}
 	if len(options.Filters) > 0 {
 		filtersByType := map[EventFilterType]EventFilter{}
@@ -427,9 +412,7 @@ func (s *Session) subscribeToProvider(provider windows.GUID, options ProviderOpt
 				filtersByType[filterType] = filter
 			}
 		}
-		filterDescriptors := C.malloc(C.size_t(unsafe.Sizeof(C.EVENT_FILTER_DESCRIPTOR{}) * uintptr(len(filtersByType))))
-		defer C.free(filterDescriptors)
-		filterDescriptorSlice := (*[2 << 25]C.EVENT_FILTER_DESCRIPTOR)(filterDescriptors)
+		filterDescriptors := make([]eventFilterDescriptorC, len(filtersByType))
 		var index int
 		for _, filter := range filtersByType {
 			descriptor, err := filter.EventFilterDescriptor()
@@ -439,53 +422,41 @@ func (s *Session) subscribeToProvider(provider windows.GUID, options ProviderOpt
 			if descriptor.Close != nil {
 				defer descriptor.Close()
 			}
-			filterDescriptorSlice[index] = descriptor.Descriptor
+			filterDescriptors[index] = descriptor.Descriptor
 			index++
 		}
-		params.EnableFilterDesc = C.PEVENT_FILTER_DESCRIPTOR(filterDescriptors)
-		params.FilterDescCount = C.ULONG(len(filtersByType))
+		params.EnableFilterDesc = &filterDescriptors[0]
+		params.FilterDescCount = uint32(len(filterDescriptors))
 	}
 
-	// ULONG WMIAPI EnableTraceEx2(
-	//	TRACEHANDLE              TraceHandle,
-	//	LPCGUID                  ProviderId,
-	//	ULONG                    ControlCode,
-	//	UCHAR                    Level,
-	//	ULONGLONG                MatchAnyKeyword,
-	//	ULONGLONG                MatchAllKeyword,
-	//	ULONG                    Timeout,
-	//	PENABLE_TRACE_PARAMETERS EnableParameters
-	// );
-	//
-	// Ref: https://docs.microsoft.com/en-us/windows/win32/api/evntrace/nf-evntrace-enabletraceex2
-	ret := C.EnableTraceEx2(
+	err := enableTraceEx2(
 		s.hSession,
-		(*C.GUID)(unsafe.Pointer(&provider)),
-		C.EVENT_CONTROL_CODE_ENABLE_PROVIDER,
-		C.UCHAR(options.Level),
-		C.ULONGLONG(options.MatchAnyKeyword),
-		C.ULONGLONG(options.MatchAllKeyword),
-		0,       // Timeout set to zero to enable the trace asynchronously
-		&params, //nolint:gocritic // TODO: dupSubExpr?? gocritic bug?
+		&provider,
+		eventControlCodeEnableProvider,
+		options.Level,
+		options.MatchAnyKeyword,
+		options.MatchAllKeyword,
+		0, // Timeout set to zero to enable the trace asynchronously
+		&params,
 	)
 
-	if status := windows.Errno(ret); status != windows.ERROR_SUCCESS {
-		return fmt.Errorf("EVENT_CONTROL_CODE_ENABLE_PROVIDER failed for GUID %s; %w", provider, status)
+	if err != nil {
+		return fmt.Errorf("EVENT_CONTROL_CODE_ENABLE_PROVIDER failed for GUID %s; %w", provider, err)
 	}
 
 	if options.TriggerRundown {
-		ret := C.EnableTraceEx2(
+		err := enableTraceEx2(
 			s.hSession,
-			(*C.GUID)(unsafe.Pointer(&provider)),
-			C.EVENT_CONTROL_CODE_CAPTURE_STATE,
-			C.UCHAR(options.Level),
-			C.ULONGLONG(options.MatchAnyKeyword),
-			C.ULONGLONG(options.MatchAllKeyword),
+			&provider,
+			eventControlCodeCaptureState,
+			options.Level,
+			options.MatchAnyKeyword,
+			options.MatchAllKeyword,
 			0,
-			&params, //nolint:gocritic
+			&params,
 		)
-		if status := windows.Errno(ret); status != windows.ERROR_SUCCESS {
-			return fmt.Errorf("EVENT_CONTROL_CODE_CAPTURE_STATE failed for GUID %s; %w", provider, status)
+		if err != nil {
+			return fmt.Errorf("EVENT_CONTROL_CODE_CAPTURE_STATE failed for GUID %s; %w", provider, err)
 		}
 	}
 	return nil
@@ -495,35 +466,25 @@ func (s *Session) subscribeToProvider(provider windows.GUID, options ProviderOpt
 func (s *Session) unsubscribeFromProviders() error {
 	var lastError error
 	for _, guid := range s.guids {
-		// ULONG WMIAPI EnableTraceEx2(
-		//	TRACEHANDLE              TraceHandle,
-		//	LPCGUID                  ProviderId,
-		//	ULONG                    ControlCode,
-		//	UCHAR                    Level,
-		//	ULONGLONG                MatchAnyKeyword,
-		//	ULONGLONG                MatchAllKeyword,
-		//	ULONG                    Timeout,
-		//	PENABLE_TRACE_PARAMETERS EnableParameters
-		// );
-		ret := C.EnableTraceEx2(
+		err := enableTraceEx2(
 			s.hSession,
-			(*C.GUID)(unsafe.Pointer(&guid)),
-			C.EVENT_CONTROL_CODE_DISABLE_PROVIDER,
+			&guid,
+			eventControlCodeDisableProvider,
 			0,
 			0,
 			0,
 			0,
-			nil)
-		status := windows.Errno(ret)
-		if status != windows.ERROR_SUCCESS && status != windows.ERROR_NOT_FOUND {
-			lastError = fmt.Errorf("EVENT_CONTROL_CODE_DISABLE_PROVIDER failed for GUID %s; %w", guid, status)
+			nil,
+		)
+		if err != nil && err != windows.ERROR_NOT_FOUND {
+			lastError = fmt.Errorf("EVENT_CONTROL_CODE_DISABLE_PROVIDER failed for GUID %s; %w", guid, err)
 		}
 	}
 	return lastError
 }
 
-var (
-	openTrace = advapi32.NewProc("OpenTraceW")
+const (
+	invalidTraceHandle = uint64(windows.InvalidHandle)
 )
 
 // processEvents subscribes to the actual provider events and starts its processing.
@@ -535,73 +496,41 @@ func (s *Session) processEvents(callbackContextKey uintptr) error {
 	trace.ProcessTraceMode = processTraceModeRealTime | processTraceModeEventRecord
 	trace.EventCallback = handleEventStdcall
 
-	r1, r2, err := openTrace.Call(
-		uintptr(unsafe.Pointer(&trace)),
-	)
-	var traceHandle C.TRACEHANDLE
-	if runtime.GOARCH == "386" {
-		// On 32 bit, r2 contains the upper 32 bits of a 64 bit return value, see
-		// https://stackoverflow.com/questions/38738534/what-is-the-second-r2-return-value-in-gos-syscall-for
-		traceHandle = C.TRACEHANDLE(r1) + (C.TRACEHANDLE(r2) << 32)
-	} else {
-		traceHandle = C.TRACEHANDLE(r1)
-	}
-	if C.INVALID_PROCESSTRACE_HANDLE == traceHandle {
+	traceHandle, err := openTrace(&trace)
+	if err != nil {
 		return fmt.Errorf("OpenTraceW failed; %w", err)
 	}
 
 	// BLOCKS UNTIL CLOSED!
-	//
-	// Ref: https://docs.microsoft.com/en-us/windows/win32/api/evntrace/nf-evntrace-processtrace
-	// ETW_APP_DECLSPEC_DEPRECATED ULONG WMIAPI ProcessTrace(
-	// 	PTRACEHANDLE HandleArray,
-	// 	ULONG        HandleCount,
-	// 	LPFILETIME   StartTime,
-	// 	LPFILETIME   EndTime
-	// );
-	ret := C.ProcessTrace(
-		&traceHandle,
-		1,   // ^ Imagine we pass an array with 1 element here.
-		nil, // Do not want to limit StartTime (default is from now).
-		nil, // Do not want to limit EndTime.
-	)
-	switch status := windows.Errno(ret); status {
-	case windows.ERROR_SUCCESS, windows.ERROR_CANCELLED:
-		return nil // Cancelled is obviously ok when we block until closing.
-	default:
-		return fmt.Errorf("ProcessTrace failed; %w", status)
+	err = processTrace(&traceHandle, 1, nil, nil)
+	if err != nil && err != windows.ERROR_CANCELLED { // Cancelled is obviously ok when we block until closing.
+		return fmt.Errorf("ProcessTrace failed; %w", err)
 	}
+	return nil
 }
 
 // stopSession wraps ControlTraceW with EVENT_TRACE_CONTROL_STOP.
 func (s *Session) stopSession() error {
-	// ULONG WMIAPI ControlTraceW(
-	//  TRACEHANDLE             TraceHandle,
-	//  LPCWSTR                 InstanceName,
-	//  PEVENT_TRACE_PROPERTIES Properties,
-	//  ULONG                   ControlCode
-	// );
-	ret := C.ControlTraceW(
+	err := controlTrace(
 		s.hSession,
 		nil,
-		(C.PEVENT_TRACE_PROPERTIES)(unsafe.Pointer(&s.propertiesBuf[0])),
-		C.EVENT_TRACE_CONTROL_STOP)
+		(*eventTraceProperties)(unsafe.Pointer(&s.propertiesBuf[0])),
+		eventTraceControlStop,
+	)
 
 	// If you receive ERROR_MORE_DATA when stopping the session, ETW will have
 	// already stopped the session before generating this error.
 	// https://docs.microsoft.com/en-us/windows/win32/api/evntrace/nf-evntrace-controltracew
-	switch status := windows.Errno(ret); status {
-	case windows.ERROR_MORE_DATA, windows.ERROR_SUCCESS:
-		return nil
-	default:
-		return status
+	if err == windows.ERROR_MORE_DATA {
+		err = nil
 	}
+	return err
 }
 
 // stopSession wraps ControlTraceW with EVENT_TRACE_CONTROL_STOP.
-func (s *Session) querySessionDetails() (*C.EVENT_TRACE_PROPERTIES, error) {
+func (s *Session) querySessionDetails() (*eventTraceProperties, error) {
 	// Allocate a buffer for EVENT_TRACE_PROPERTIES and up to 2 names with up to 1024 chars behind it
-	bufSize := int(unsafe.Sizeof(C.EVENT_TRACE_PROPERTIES{}) + 2*1024)
+	bufSize := int(unsafe.Sizeof(eventTraceProperties{}) + 2*1024)
 	propertiesBuf := make([]byte, bufSize)
 
 	// We will use Query Performance Counter for timestamp cos it gives us higher
@@ -609,29 +538,21 @@ func (s *Session) querySessionDetails() (*C.EVENT_TRACE_PROPERTIES, error) {
 	// FileTime due to absence of PROCESS_TRACE_MODE_RAW_TIMESTAMP in LogFileMode.
 	//
 	// Ref: https://docs.microsoft.com/en-us/windows/win32/api/evntrace/ns-evntrace-event_trace_properties
-	pProperties := (C.PEVENT_TRACE_PROPERTIES)(unsafe.Pointer(&propertiesBuf[0]))
-	pProperties.Wnode.BufferSize = C.ulong(bufSize)
-	pProperties.LoggerNameOffset = C.ulong(unsafe.Sizeof(C.EVENT_TRACE_PROPERTIES{}))
-	pProperties.LogFileNameOffset = C.ulong(unsafe.Sizeof(C.EVENT_TRACE_PROPERTIES{}) + 1024)
+	pProperties := (*eventTraceProperties)(unsafe.Pointer(&propertiesBuf[0]))
+	pProperties.Wnode.BufferSize = uint32(bufSize)
+	pProperties.LoggerNameOffset = uint32(unsafe.Sizeof(eventTraceProperties{}))
+	pProperties.LogFileNameOffset = uint32(unsafe.Sizeof(eventTraceProperties{}) + 1024)
 
-	// ULONG WMIAPI ControlTraceW(
-	//  TRACEHANDLE             TraceHandle,
-	//  LPCWSTR                 InstanceName,
-	//  PEVENT_TRACE_PROPERTIES Properties,
-	//  ULONG                   ControlCode
-	// );
-	ret := C.ControlTraceW(
+	err := controlTrace(
 		s.hSession,
 		nil,
-		(C.PEVENT_TRACE_PROPERTIES)(unsafe.Pointer(&s.propertiesBuf[0])),
-		C.EVENT_TRACE_CONTROL_QUERY)
-
-	switch status := windows.Errno(ret); status {
-	case windows.ERROR_SUCCESS:
-		return pProperties, nil
-	default:
-		return nil, status
+		(*eventTraceProperties)(unsafe.Pointer(&s.propertiesBuf[0])),
+		eventTraceControlQuery,
+	)
+	if err != nil {
+		return nil, err
 	}
+	return pProperties, nil
 }
 
 func randomName() string {

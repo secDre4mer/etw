@@ -1,9 +1,5 @@
 package etw
 
-/*
-	#include "session.h"
-*/
-import "C"
 import (
 	"unsafe"
 
@@ -26,11 +22,6 @@ type eventHeaderC struct {
 	UserTime        uint32
 	ActivityId      windows.GUID
 }
-
-const (
-	_ = unsafe.Sizeof(eventHeaderC{}) - unsafe.Sizeof(C.EVENT_HEADER{})
-	_ = unsafe.Sizeof(C.EVENT_HEADER{}) - unsafe.Sizeof(eventHeaderC{})
-)
 
 type etwBufferContext struct {
 	ProcessorIndex uint16
@@ -59,11 +50,6 @@ type eventRecordCommon struct {
 	UserData          unsafe.Pointer
 	UserContext       uintptr
 }
-
-const (
-	_ = unsafe.Sizeof(eventRecordC{}) - unsafe.Sizeof(C.EVENT_RECORD{})
-	_ = unsafe.Sizeof(C.EVENT_RECORD{}) - unsafe.Sizeof(eventRecordC{})
-)
 
 // EventDescriptor contains low-level metadata that defines received event.
 // Most of fields could be used to refine events filtration.
@@ -116,11 +102,6 @@ type traceEventInfoC struct {
 	EventPropertyInfoArray [anysizeArray]eventPropertyInfoC
 }
 
-const (
-	_ = unsafe.Offsetof(traceEventInfoC{}.TopLevelPropertyCount) - unsafe.Offsetof(C.TRACE_EVENT_INFO{}.TopLevelPropertyCount)
-	_ = unsafe.Offsetof(C.TRACE_EVENT_INFO{}.TopLevelPropertyCount) - unsafe.Offsetof(traceEventInfoC{}.TopLevelPropertyCount)
-)
-
 type propertyFlagsC uint32
 
 type eventPropertyInfoC struct {
@@ -139,11 +120,6 @@ type eventPropertyInfoC struct {
 	}
 	_ uint32
 }
-
-const (
-	_ = unsafe.Sizeof(eventPropertyInfoC{}) - unsafe.Sizeof(C.EVENT_PROPERTY_INFO{})
-	_ = unsafe.Sizeof(C.EVENT_PROPERTY_INFO{}) - unsafe.Sizeof(eventPropertyInfoC{})
-)
 
 func (e eventPropertyInfoC) countPropertyIndex() uint16 {
 	return e.countUnion.count
@@ -225,11 +201,6 @@ type eventTraceLogfileCommon struct {
 	Context          uintptr
 }
 
-const (
-	_ = unsafe.Sizeof(eventTraceLogfile{}) - unsafe.Sizeof(C.EVENT_TRACE_LOGFILEW{})
-	_ = unsafe.Sizeof(C.EVENT_TRACE_LOGFILEW{}) - unsafe.Sizeof(eventTraceLogfile{})
-)
-
 type traceLogfileHeader struct {
 	BufferSize         uint32
 	MajorVersion       uint8
@@ -261,11 +232,6 @@ type traceLogfileHeader struct {
 	BuffersLost   uint32
 }
 
-const (
-	_ = unsafe.Sizeof(traceLogfileHeader{}) - unsafe.Sizeof(C.TRACE_LOGFILE_HEADER{})
-	_ = unsafe.Sizeof(C.TRACE_LOGFILE_HEADER{}) - unsafe.Sizeof(traceLogfileHeader{})
-)
-
 type eventTraceCommon struct {
 	Header           eventTraceHeader
 	InstanceId       uint32
@@ -275,11 +241,6 @@ type eventTraceCommon struct {
 	MofLength        uint32
 	BufferContext    etwBufferContext // Union with ClientContext
 }
-
-const (
-	_ = unsafe.Sizeof(eventTrace{}) - unsafe.Sizeof(C.EVENT_TRACE{})
-	_ = unsafe.Sizeof(C.EVENT_TRACE{}) - unsafe.Sizeof(eventTrace{})
-)
 
 type eventTraceHeader struct {
 	Size           uint16
@@ -296,12 +257,114 @@ type eventTraceHeader struct {
 }
 
 const (
-	_ = unsafe.Sizeof(eventTraceHeader{}) - unsafe.Sizeof(C.EVENT_TRACE_HEADER{})
-	_ = unsafe.Sizeof(C.EVENT_TRACE_HEADER{}) - unsafe.Sizeof(eventTraceHeader{})
-)
-
-const (
 	processTraceModeRealTime     = 0x00000100
 	processTraceModeRawTimestamp = 0x00001000
 	processTraceModeEventRecord  = 0x10000000
 )
+
+type eventTracePropertiesCommon struct {
+	Wnode               wnodeHeader
+	BufferSize          uint32
+	MinimumBuffers      uint32
+	MaximumBuffers      uint32
+	MaximumFileSize     uint32
+	LogFileMode         uint32
+	FlushTimer          uint32
+	EnableFlags         uint32
+	_                   int32 // No longer used - AgeLimit / FlushThreshold union
+	NumberOfBuffers     uint32
+	FreeBuffers         uint32
+	EventsLost          uint32
+	BuffersWritten      uint32
+	LogBuffersLost      uint32
+	RealTimeBuffersLost uint32
+	LoggerThreadId      windows.Handle
+	LogFileNameOffset   uint32
+	LoggerNameOffset    uint32
+
+	/* V2 adds:
+	VersionNumber       uint32
+	FilterDescCount     uint32
+	FilterDesc          *eventFilterDescriptorC
+	V2Options           uint64
+	*/
+}
+
+type wnodeHeader struct {
+	BufferSize        uint32
+	ProviderId        uint32
+	HistoricalContext uint64 // Union with Version / Linkage
+	TimeStamp         int64  // Union with KernelHandle
+	Guid              windows.GUID
+	ClientContext     uint32
+	Flags             uint32
+}
+
+const (
+	wnodeFlagAllData             = 0x00000001
+	wnodeFlagSingleInstance      = 0x00000002
+	wnodeFlagSingleItem          = 0x00000004
+	wnodeFlagEventItem           = 0x00000008
+	wnodeFlagFixedInstanceSize   = 0x00000010
+	wnodeFlagTooSmall            = 0x00000020
+	wnodeFlagInstancesSame       = 0x00000040
+	wnodeFlagStaticInstanceNames = 0x00000080
+	wnodeFlagInternal            = 0x00000100
+	wnodeFlagUseTimestamp        = 0x00000200
+	wnodeFlagPersistEvent        = 0x00000400
+	wnodeFlagEventReference      = 0x00002000
+	wnodeFlagAnsiInstancenames   = 0x00004000
+	wnodeFlagMethodItem          = 0x00008000
+	wnodeFlagPdoInstanceNames    = 0x00010000
+	wnodeFlagTracedGuid          = 0x00020000
+	wnodeFlagLogWnode            = 0x00040000
+	wnodeFlagUseGuidPtr          = 0x00080000
+	wnodeFlagUseMofPtr           = 0x00100000
+	wnodeFlagNoHeader            = 0x00200000
+	wnodeFlagSendDataBlock       = 0x00400000
+	wnodeFlagVersionedProperties = 0x00800000
+	wnodeFlagSeverityMask        = 0xff000000
+)
+
+type eventFilterDescriptorCommon struct {
+	Ptr  unsafe.Pointer
+	Size uint32
+	Type uint32
+}
+
+type traceQueryInfoClass uint32
+
+const (
+	traceGuidQueryList traceQueryInfoClass = iota
+	traceGuidQueryInfo
+	traceGuidQueryProcess
+	traceStackTracingInfo
+	traceSystemTraceEnableFlagsInfo
+	traceSampledProfileIntervalInfo
+	traceProfileSourceConfigInfo
+	traceProfileSourceListInfo
+	tracePmcEventListInfo
+	tracePmcCounterListInfo
+	traceSetDisallowList
+	traceVersionInfo
+	traceGroupQueryList
+	traceGroupQueryInfo
+	traceDisallowListQuery
+	traceCompressionInfo
+	tracePeriodicCaptureStateListInfo
+	tracePeriodicCaptureStateInfo
+	traceProviderBinaryTracking
+	traceMaxLoggersQuery
+)
+
+type providerEnumerationInfo struct {
+	NumberOfProviders      uint32
+	_                      uint32
+	TraceProviderInfoArray [anysizeArray]traceProviderInfo
+}
+
+type traceProviderInfo struct {
+	ProviderGuid       windows.GUID
+	SchemaSource       uint32
+	ProviderNameOffset uint32
+}

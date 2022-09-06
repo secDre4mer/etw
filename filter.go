@@ -1,10 +1,5 @@
 package etw
 
-/*
-#include "session.h"
-*/
-import "C"
-
 import (
 	"encoding/binary"
 	"errors"
@@ -56,15 +51,13 @@ func (e EventIdFilter) EventFilterDescriptor() (EventFilterDescriptor, error) {
 	for i, eventId := range e.EventIds {
 		binary.LittleEndian.PutUint16(buffer[int(unsafe.Sizeof(eventFilterEventId{}))+2*i:], eventId)
 	}
-	cBuffer := C.CBytes(buffer)
+	var cDescriptor eventFilterDescriptorC
+	cDescriptor.Ptr = unsafe.Pointer(&buffer[0])
+	cDescriptor.Size = uint32(len(buffer))
+	cDescriptor.Type = uint32(EVENT_FILTER_TYPE_EVENT_ID)
 	return EventFilterDescriptor{
-		Descriptor: C.EVENT_FILTER_DESCRIPTOR{
-			Ptr:  C.ULONGLONG(uintptr(cBuffer)),
-			Size: C.ULONG(len(buffer)),
-			Type: C.ULONG(EVENT_FILTER_TYPE_EVENT_ID),
-		},
+		Descriptor: cDescriptor,
 		Close: func() error {
-			C.free(cBuffer)
 			return nil
 		},
 	}, nil
@@ -107,7 +100,7 @@ var (
 )
 
 type EventFilterDescriptor struct {
-	Descriptor C.EVENT_FILTER_DESCRIPTOR
+	Descriptor eventFilterDescriptorC
 	Close      func() error
 }
 
@@ -137,7 +130,7 @@ func (e EventPayloadFilter) EventFilterDescriptor() (EventFilterDescriptor, erro
 		return EventFilterDescriptor{}, fmt.Errorf("TdhCreatePayloadFilter failed with %w", windows.Errno(status))
 	}
 	defer tdhDeletePayloadFilter.Call(uintptr(unsafe.Pointer(&payloadFilter)))
-	var filterDescriptor C.EVENT_FILTER_DESCRIPTOR
+	var filterDescriptor eventFilterDescriptorC
 	status, _, _ = tdhAggregatePayloadFilters.Call(
 		1,
 		uintptr(unsafe.Pointer(&payloadFilter)),

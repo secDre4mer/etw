@@ -10,17 +10,6 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-/*
-// MinGW headers are always restricted to the lowest possible Windows version,
-// so specify Win7+ manually.
-#undef _WIN32_WINNT
-#define _WIN32_WINNT _WIN32_WINNT_WIN7
-
-#include <windows.h>
-#include <tdh.h>
-*/
-import "C"
-
 var (
 	enumerateProviders                = tdh.NewProc("TdhEnumerateProviders")
 	enumerateProviderFieldInformation = tdh.NewProc("TdhEnumerateProviderFieldInformation")
@@ -199,29 +188,14 @@ func ListProviders() ([]Provider, error) {
 		return nil, status
 	}
 	var parsedProviders []Provider
-	enumerationInfo := (*C.PROVIDER_ENUMERATION_INFO)(unsafe.Pointer(&buffer[0]))
-	// Recast provider info array to escape golang boundary checks
-	providerInfoArray := (*[anysizeArray]C.TRACE_PROVIDER_INFO)(unsafe.Pointer(&enumerationInfo.TraceProviderInfoArray))
-	for _, providerInfo := range providerInfoArray[:enumerationInfo.NumberOfProviders] {
+	enumerationInfo := (*providerEnumerationInfo)(unsafe.Pointer(&buffer[0]))
+	for _, providerInfo := range enumerationInfo.TraceProviderInfoArray[:enumerationInfo.NumberOfProviders] {
 		parsedProviders = append(parsedProviders, Provider{
 			Name: parseUnicodeStringAtOffset(buffer, int(providerInfo.ProviderNameOffset)),
-			Guid: windowsGUIDToGo(providerInfo.ProviderGuid),
+			Guid: providerInfo.ProviderGuid,
 		})
 	}
 	return parsedProviders, nil
-}
-
-func windowsGUIDToGo(guid C.GUID) windows.GUID {
-	var data4 [8]byte
-	for i := range data4 {
-		data4[i] = byte(guid.Data4[i])
-	}
-	return windows.GUID{
-		Data1: uint32(guid.Data1),
-		Data2: uint16(guid.Data2),
-		Data3: uint16(guid.Data3),
-		Data4: data4,
-	}
 }
 
 func parseUnicodeStringAtOffset(buffer []byte, offset int) string {

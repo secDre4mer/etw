@@ -11,106 +11,64 @@ func traceQueryInformation(sessionHandle uint64, infoClass traceQueryInfoClass, 
 	if err := procTraceQueryInformation.Find(); err != nil {
 		return fmt.Errorf("TraceQueryInformation is only supported on Windows 8+")
 	}
-	// ULONG WMIAPI TraceQueryInformation(
-	//  [in]            TRACEHANDLE      SessionHandle,
-	//  [in]            TRACE_INFO_CLASS InformationClass,
-	//  [out]           PVOID            TraceInformation,
-	//  [in]            ULONG            InformationLength,
-	//  [out, optional] PULONG           ReturnLength
-	// );
-	ret, _, _ := procTraceQueryInformation.Call(
-		// Pass 64-bit argument as lower bits first, then higher bits
-		uintptr(sessionHandle),
-		uintptr(sessionHandle>>32),
-		uintptr(infoClass),
-		uintptr(buffer),
-		uintptr(bufferSize),
-		uintptr(unsafe.Pointer(returnLength)),
+	return traceQueryInformation_32(
+		uint32(sessionHandle),
+		uint32(sessionHandle>>32),
+		infoClass,
+		buffer,
+		bufferSize,
+		returnLength,
 	)
-	if err := windows.Errno(ret); err != windows.ERROR_SUCCESS {
-		return err
-	}
-	return nil
 }
 
 func traceSetInformation(sessionHandle uint64, infoClass traceQueryInfoClass, buffer unsafe.Pointer, bufferSize uint32) error {
 	if err := procTraceSetInformation.Find(); err != nil {
 		return fmt.Errorf("TraceSetInformation is only supported on Windows 8+")
 	}
-	// ULONG WMIAPI TraceSetInformation(
-	//  [in] TRACEHANDLE      SessionHandle,
-	//  [in] TRACE_INFO_CLASS InformationClass,
-	//  [in] PVOID            TraceInformation,
-	//  [in] ULONG            InformationLength
-	// );
-	ret, _, _ := procTraceSetInformation.Call(
-		// Pass 64-bit argument as lower bits first, then higher bits
-		uintptr(sessionHandle),
-		uintptr(sessionHandle>>32),
-		uintptr(infoClass),
-		uintptr(buffer),
-		uintptr(bufferSize),
+	return traceSetInformation_32(
+		uint32(sessionHandle),
+		uint32(sessionHandle>>32),
+		infoClass,
+		buffer,
+		bufferSize,
 	)
-	if err := windows.Errno(ret); err != windows.ERROR_SUCCESS {
-		return err
-	}
-	return nil
 }
 
 func controlTrace(sessionHandle uint64, instanceName *uint16, properties *eventTraceProperties, controlCode uint32) error {
-	// ULONG WMIAPI ControlTraceW(
-	//  TRACEHANDLE             TraceHandle,
-	//  LPCWSTR                 InstanceName,
-	//  PEVENT_TRACE_PROPERTIES Properties,
-	//  ULONG                   ControlCode
-	// );
-	ret, _, _ := procControlTraceW.Call(
-		// Pass 64-bit argument as lower bits first, then higher bits
-		uintptr(sessionHandle),
-		uintptr(sessionHandle>>32),
-		uintptr(unsafe.Pointer(instanceName)),
-		uintptr(unsafe.Pointer(properties)),
-		uintptr(controlCode),
+	return controlTrace_32(
+		uint32(sessionHandle),
+		uint32(sessionHandle>>32),
+		instanceName,
+		properties,
+		controlCode,
 	)
-	if status := windows.Errno(ret); status != windows.ERROR_SUCCESS {
-		return status
-	}
-	return nil
 }
 
 func enableTraceEx2(sessionHandle uint64, providerGuid *windows.GUID, controlCode uint32, level TraceLevel, matchAnyKeyword uint64, matchAllKeyword uint64, timeout uint32, enableParameters *enableTraceParameters) error {
-	// ULONG WMIAPI EnableTraceEx2(
-	//	TRACEHANDLE              TraceHandle,
-	//	LPCGUID                  ProviderId,
-	//	ULONG                    ControlCode,
-	//	UCHAR                    Level,
-	//	ULONGLONG                MatchAnyKeyword,
-	//	ULONGLONG                MatchAllKeyword,
-	//	ULONG                    Timeout,
-	//	PENABLE_TRACE_PARAMETERS EnableParameters
-	// );
-	//
-	// Ref: https://docs.microsoft.com/en-us/windows/win32/api/evntrace/nf-evntrace-enabletraceex2
-	ret, _, _ := procEnableTraceEx2.Call(
-		// Pass 64-bit argument as lower bits first, then higher bits
-		uintptr(sessionHandle),
-		uintptr(sessionHandle>>32),
-		uintptr(unsafe.Pointer(providerGuid)),
-		uintptr(controlCode),
-		uintptr(level),
-		// Pass 64-bit argument as lower bits first, then higher bits
-		uintptr(matchAnyKeyword),
-		uintptr(matchAnyKeyword>>32),
-		// Pass 64-bit argument as lower bits first, then higher bits
-		uintptr(matchAllKeyword),
-		uintptr(matchAllKeyword>>32),
-		uintptr(timeout),
-		uintptr(unsafe.Pointer(enableParameters)),
+	return enableTraceEx2_32(
+		uint32(sessionHandle),
+		uint32(sessionHandle>>32),
+		providerGuid,
+		controlCode,
+		level,
+		uint32(matchAnyKeyword),
+		uint32(matchAnyKeyword>>32),
+		uint32(matchAllKeyword),
+		uint32(matchAllKeyword>>32),
+		timeout,
+		enableParameters,
 	)
-	if err := windows.Errno(ret); err != windows.ERROR_SUCCESS {
-		return err
-	}
-	return nil
+}
+
+func queryProviderFieldInformation(guid *windows.GUID, eventFieldValue uint64, eventFieldType EventFieldType, buffer *providerFieldInfoArray, bufferSize *uint32) error {
+	return queryProviderFieldInformation_32(
+		guid,
+		uint32(eventFieldValue),
+		uint32(eventFieldValue>>32),
+		eventFieldType,
+		buffer,
+		bufferSize,
+	)
 }
 
 func openTrace(logfile *eventTraceLogfile) (uint64, error) {
@@ -127,27 +85,4 @@ func openTrace(logfile *eventTraceLogfile) (uint64, error) {
 		return 0, err
 	}
 	return traceHandle, nil
-}
-
-func queryProviderFieldInformation(guid *windows.GUID, eventFieldValue uint64, eventFieldType EventFieldType, buffer *providerFieldInfoArray, bufferSize *uint32) error {
-	// TDHSTATUS TdhQueryProviderFieldInformation(
-	//  [in]      LPGUID                    pGuid,
-	//  [in]      ULONGLONG                 EventFieldValue,
-	//  [in]      EVENT_FIELD_TYPE          EventFieldType,
-	//  [out]     PPROVIDER_FIELD_INFOARRAY pBuffer,
-	//  [in, out] ULONG                     *pBufferSize
-	// );
-	status, _, _ := procQueryProviderFieldInformation.Call(
-		uintptr(unsafe.Pointer(guid)),
-		// Pass 64-bit argument as lower bits first, then higher bits
-		uintptr(eventFieldValue),
-		uintptr(eventFieldValue>>32),
-		uintptr(eventFieldType),
-		uintptr(unsafe.Pointer(buffer)),
-		uintptr(unsafe.Pointer(bufferSize)),
-	)
-	if err := windows.Errno(status); err != windows.ERROR_SUCCESS {
-		return err
-	}
-	return nil
 }

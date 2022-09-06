@@ -387,3 +387,43 @@ type providerFieldInfo struct {
 	DescriptionOffset uint32
 	Value             uint64
 }
+
+type eventFilterEventId struct {
+	FilterIn bool
+	_        byte
+	Count    uint16
+	// ... Events...
+}
+
+type CompareOperation uint16
+
+const (
+	CompareIntegerEqual CompareOperation = iota
+	CompareIntegerNotEqual
+	CompareIntegerLessOrEqual
+	CompareIntegerGreater
+	CompareIntegerLess
+	CompareIntegerGreatorOrEqual
+	CompareIntegerBetween
+	CompareIntegerNotBetween
+	CompareIntegerModulo
+)
+const (
+	CompareStringContains    CompareOperation = 20
+	CompareStringNotContains CompareOperation = 21
+	CompareStringEquals      CompareOperation = 30
+	CompareStringNotEquals   CompareOperation = 31
+)
+
+// PAYLOAD_FILTER_PREDICATE definition, https://docs.microsoft.com/en-us/windows/win32/api/tdh/ns-tdh-payload_filter_predicate
+type payloadFilterPredicate struct {
+	FieldName *uint16
+	Operation CompareOperation
+	Value     *uint16
+}
+
+type propertyDataDescriptor struct {
+	PropertyName unsafe.Pointer
+	ArrayIndex   uint32
+	_            uint32
+}

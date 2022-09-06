@@ -6,7 +6,6 @@ package etw
 import (
 	"fmt"
 	"sync"
-	"syscall"
 	"time"
 	"unicode/utf16"
 	"unsafe"
@@ -271,10 +270,6 @@ func newPropertyParser(r *eventRecordC, ignoreMapInfo bool) (*propertyParser, er
 	}, nil
 }
 
-var (
-	tdhGetEventInformation = tdh.NewProc("TdhGetEventInformation")
-)
-
 var eventInfoBufferSize = 10 * 1024
 
 var eventInfoBufferPool = sync.Pool{
@@ -299,28 +294,28 @@ func getEventInformation(pEvent *eventRecordC) (*traceEventInfoC, []byte, error)
 	var bufferSize = uint32(len(buffer))
 
 	// Retrieve a buffer size.
-	ret, _, _ := tdhGetEventInformation.Call(
-		uintptr(unsafe.Pointer(pEvent)),
+	err := tdhGetEventInformation(
+		pEvent,
 		0,
-		0,
-		uintptr(unsafe.Pointer(&buffer[0])),
-		uintptr(unsafe.Pointer(&bufferSize)),
+		nil,
+		&buffer[0],
+		&bufferSize,
 	)
-	if windows.Errno(ret) == windows.ERROR_INSUFFICIENT_BUFFER {
+	if err == windows.ERROR_INSUFFICIENT_BUFFER {
 		buffer = make([]uint8, bufferSize)
 
 		// Fetch the buffer itself.
-		ret, _, _ = tdhGetEventInformation.Call(
-			uintptr(unsafe.Pointer(pEvent)),
+		err = tdhGetEventInformation(
+			pEvent,
 			0,
-			0,
-			uintptr(unsafe.Pointer(&buffer[0])),
-			uintptr(unsafe.Pointer(&bufferSize)),
+			nil,
+			&buffer[0],
+			&bufferSize,
 		)
 	}
 
-	if status := windows.Errno(ret); status != windows.ERROR_SUCCESS {
-		return nil, nil, fmt.Errorf("TdhGetEventInformation failed; %w", status)
+	if err != nil {
+		return nil, nil, fmt.Errorf("TdhGetEventInformation failed; %w", err)
 	}
 
 	return (*traceEventInfoC)(unsafe.Pointer(&buffer[0])), buffer, nil
@@ -335,38 +330,19 @@ func (p *propertyParser) getPropertyName(i int) string {
 	return createUTF16String(getPropertyName(p.info, i), anysizeArray)
 }
 
-type propertyDataDescriptor struct {
-	PropertyName unsafe.Pointer
-	ArrayIndex   uint32
-	_            uint32
-}
-
 func getLengthFromProperty(event *eventRecordC, dataDescriptor *propertyDataDescriptor) (uint32, error) {
-	var propertySize, length uint32
-
-	status, _, _ := procTdhGetPropertySize.Call(
-		uintptr(unsafe.Pointer(event)),
+	var length uint32
+	err := tdhGetProperty(
+		event,
 		0,
-		0,
+		nil,
 		1,
-		uintptr(unsafe.Pointer(dataDescriptor)),
-		uintptr(unsafe.Pointer(&propertySize)),
+		dataDescriptor,
+		uint32(unsafe.Sizeof(length)),
+		unsafe.Pointer(&length),
 	)
-
-	if windows.Errno(status) != windows.ERROR_SUCCESS {
-		return 0, windows.Errno(status)
-	}
-	status, _, _ = procTdhGetProperty.Call(
-		uintptr(unsafe.Pointer(event)),
-		0,
-		0,
-		1,
-		uintptr(unsafe.Pointer(dataDescriptor)),
-		uintptr(unsafe.Pointer(&propertySize)),
-		uintptr(unsafe.Pointer(&length)),
-	)
-	if windows.Errno(status) != windows.ERROR_SUCCESS {
-		return 0, windows.Errno(status)
+	if err != nil {
+		return 0, err
 	}
 	return length, nil
 }
@@ -458,30 +434,29 @@ func (p *propertyParser) parseSimpleType(propertyInfo eventPropertyInfoC) (strin
 	inType := propertyInfo.nonStructType.InType
 	outType := propertyInfo.nonStructType.OutType
 
-	var userDataConsumed int
+	var userDataConsumed uint16
 
 	// Initialize parse buffer with a size that should be sufficient for most properties.
-	formattedDataSize := len(p.parseBuffer)
+	formattedDataSize := uint32(len(p.parseBuffer))
 
 retryLoop:
 	for {
-		r0, _, _ := syscall.SyscallN(
-			procTdhFormatProperty.Addr(),
-			uintptr(unsafe.Pointer(p.record)),
-			uintptr(mapInfo),
-			p.ptrSize,
-			uintptr(inType),
-			uintptr(outType),
-			uintptr(propertyLength),
-			p.remainingData,
-			uintptr(p.data),
-			uintptr(unsafe.Pointer(&formattedDataSize)),
-			uintptr(unsafe.Pointer(&p.parseBuffer[0])),
-			uintptr(unsafe.Pointer(&userDataConsumed)),
+		err := tdhFormatProperty(
+			p.record,
+			(*uint8)(mapInfo),
+			uint32(p.ptrSize),
+			inType,
+			outType,
+			uint16(propertyLength),
+			uint16(p.remainingData),
+			(*uint8)(p.data),
+			&formattedDataSize,
+			&p.parseBuffer[0],
+			&userDataConsumed,
 		)
 
-		switch status := windows.Errno(r0); status {
-		case windows.ERROR_SUCCESS:
+		switch err {
+		case nil:
 			break retryLoop
 
 		case windows.ERROR_INSUFFICIENT_BUFFER:
@@ -499,52 +474,48 @@ retryLoop:
 			fallthrough // Can't fix. Error.
 
 		default:
-			return "", fmt.Errorf("TdhFormatProperty failed; %w", status)
+			return "", fmt.Errorf("TdhFormatProperty failed; %w", err)
 		}
 	}
 	p.data = unsafe.Add(p.data, userDataConsumed)
 	p.remainingData -= uintptr(userDataConsumed)
 
-	return createUTF16String(unsafe.Pointer(&p.parseBuffer[0]), formattedDataSize), nil
+	return createUTF16String(unsafe.Pointer(&p.parseBuffer[0]), int(formattedDataSize)), nil
 }
-
-var (
-	tdhGetEventMapInformation = tdh.NewProc("TdhGetEventMapInformation")
-)
 
 // getMapInfo retrieve the mapping between the @i-th field and the structure it represents.
 // If that mapping exists, function extracts it and returns a pointer to the buffer with
 // extracted info. If no mapping defined, function can legitimately return `nil, nil`.
 func (p *propertyParser) getMapInfo(propertyInfo eventPropertyInfoC) (unsafe.Pointer, error) {
-	mapName := unsafe.Add(unsafe.Pointer(p.info), propertyInfo.nonStructType.MapNameOffset)
+	mapName := (*uint16)(unsafe.Add(unsafe.Pointer(p.info), propertyInfo.nonStructType.MapNameOffset))
 
 	// Query map info if any exists.
 	var mapSize uint32
-	ret, _, _ := tdhGetEventMapInformation.Call(
-		uintptr(unsafe.Pointer(p.record)),
-		uintptr(mapName),
-		0,
-		uintptr(unsafe.Pointer(&mapSize)),
+	err := tdhGetEventMapInformation(
+		p.record,
+		mapName,
+		nil,
+		&mapSize,
 	)
-	switch status := windows.Errno(ret); status {
+	switch err {
 	case windows.ERROR_NOT_FOUND:
 		return nil, nil // Pretty ok, just no map info
 	case windows.ERROR_INSUFFICIENT_BUFFER:
 		// Info exists -- need a buffer.
 	default:
-		return nil, fmt.Errorf("TdhGetEventMapInformation failed to get size; %w", status)
+		return nil, fmt.Errorf("TdhGetEventMapInformation failed to get size; %w", err)
 	}
 
 	// Get the info itself.
 	mapInfo := make([]byte, int(mapSize))
-	ret, _, _ = tdhGetEventMapInformation.Call(
-		uintptr(unsafe.Pointer(p.record)),
-		uintptr(mapName),
-		uintptr(unsafe.Pointer(&mapInfo[0])),
-		uintptr(unsafe.Pointer(&mapSize)),
+	err = tdhGetEventMapInformation(
+		p.record,
+		mapName,
+		&mapInfo[0],
+		&mapSize,
 	)
-	if status := windows.Errno(ret); status != windows.ERROR_SUCCESS {
-		return nil, fmt.Errorf("TdhGetEventMapInformation failed; %w", status)
+	if err != nil {
+		return nil, fmt.Errorf("TdhGetEventMapInformation failed; %w", err)
 	}
 
 	if len(mapInfo) == 0 {
@@ -627,3 +598,9 @@ const (
 	TdhIntypeBinary = 14 // Undefined in MinGW.
 	TdhOuttypeIpv6  = 24 // Undefined in MinGW.
 )
+
+//sys tdhGetEventInformation(event *eventRecordC, contextCount uint32, context unsafe.Pointer, buffer *uint8, bufferSize *uint32) (ret error) = tdh.TdhGetEventInformation
+//sys tdhGetPropertySize(event *eventRecordC, contextCount uint32, context unsafe.Pointer, propertyDataCount uint32, propertyData *propertyDataDescriptor, propertySize *uint32) (ret error) = tdh.TdhGetPropertySize
+//sys tdhGetProperty(event *eventRecordC, contextCount uint32, context unsafe.Pointer, propertyDataCount uint32, propertyData *propertyDataDescriptor, bufferSize uint32, buffer unsafe.Pointer) (ret error) = tdh.TdhGetProperty
+//sys tdhGetEventMapInformation(event *eventRecordC, mapName *uint16, buffer *uint8, bufferSize *uint32) (ret error) = tdh.TdhGetEventMapInformation
+//sys tdhFormatProperty(event *eventRecordC, mapInfo *uint8, pointerSize uint32, inType uint16, outType uint16, propertyLength uint16, userDataLength uint16, userData *uint8, bufferSize *uint32, buffer *uint8, userDataConsumed *uint16) (ret error) = tdh.TdhFormatProperty

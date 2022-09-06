@@ -639,3 +639,18 @@ func stampToTime(quadPart uint64) time.Time {
 	}
 	return time.Unix(0, ft.Nanoseconds())
 }
+
+//sys startTrace(sessionHandle *uint64, sessionName *uint16, traceProperties unsafe.Pointer) (ret error) = advapi32.StartTraceW
+//sys processTrace(handleArray *uint64, handleCount uint32, startTime *windows.Filetime, endTime *windows.Filetime) (ret error) = advapi32.ProcessTrace
+
+//sys traceQueryInformation_64(sessionHandle uint64, infoClass traceQueryInfoClass, buffer unsafe.Pointer, bufferSize uint32, returnLength *uint32) (ret error) = advapi32.TraceQueryInformation
+//sys traceQueryInformation_32(sessionHandleLower uint32, sessionHandleHigher uint32, infoClass traceQueryInfoClass, buffer unsafe.Pointer, bufferSize uint32, returnLength *uint32) (ret error) = advapi32.TraceQueryInformation
+
+//sys traceSetInformation_64(sessionHandle uint64, infoClass traceQueryInfoClass, buffer unsafe.Pointer, bufferSize uint32) (ret error) = advapi32.TraceSetInformation
+//sys traceSetInformation_32(sessionHandleLower uint32, sessionHandleHigher uint32, infoClass traceQueryInfoClass, buffer unsafe.Pointer, bufferSize uint32) (ret error) = advapi32.TraceSetInformation
+
+//sys controlTrace_64(sessionHandle uint64, instanceName *uint16, properties *eventTraceProperties, controlCode uint32) (ret error) = advapi32.ControlTraceW
+//sys controlTrace_32(sessionHandleLower uint32, sessionHandleHigher uint32, instanceName *uint16, properties *eventTraceProperties, controlCode uint32) (ret error) = advapi32.ControlTraceW
+
+//sys enableTraceEx2_64(sessionHandle uint64, providerGuid *windows.GUID, controlCode uint32, level TraceLevel, matchAnyKeyword uint64, matchAllKeyword uint64, timeout uint32, enableParameters *enableTraceParameters) (ret error) = advapi32.EnableTraceEx2
+//sys enableTraceEx2_32(sessionHandleLower uint32, sessionHandleHigher uint32, providerGuid *windows.GUID, controlCode uint32, level TraceLevel, matchAnyKeywordLower uint32, matchAnyKeywordHigher uint32, matchAllKeywordLower uint32, matchAllKeywordHigher uint32, timeout uint32, enableParameters *enableTraceParameters) (ret error) = advapi32.EnableTraceEx2

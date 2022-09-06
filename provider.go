@@ -209,3 +209,10 @@ func (p Provider) ListEvents() ([]EventDescriptor, error) {
 	copy(descriptors, eventInfo.descriptors[:eventInfo.NumberOfEvents])
 	return descriptors, nil
 }
+
+//sys enumerateProviderFieldInformation(guid *windows.GUID, fieldType EventFieldType, buffer *providerFieldInfoArray, bufferSize *uint32) (err error) = tdh.TdhEnumerateProviderFieldInformation
+//sys enumerateProviders(buffer *providerEnumerationInfo, bufferSize *uint32) (ret error) = tdh.TdhEnumerateProviders
+//sys enumerateManifestProviderEvents(providerGuid *windows.GUID, buffer *providerEventInfo, bufferSize *uint32) (ret error) = tdh.TdhEnumerateManifestProviderEvents
+
+//sys queryProviderFieldInformation_64(guid *windows.GUID, eventFieldValue uint64, eventFieldType EventFieldType, buffer *providerFieldInfoArray, bufferSize *uint32) (ret error) = tdh.TdhQueryProviderFieldInformation
+//sys queryProviderFieldInformation_32(guid *windows.GUID, eventFieldValueLower uint32, eventFieldValueHigher uint32, eventFieldType EventFieldType, buffer *providerFieldInfoArray, bufferSize *uint32) (ret error) = tdh.TdhQueryProviderFieldInformation

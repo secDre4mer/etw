@@ -12,12 +12,16 @@ events in go code.
 as well as from classic (aka EventLog) providers, so you could actually listen to anything you can
 see in Event Viewer window.
 
-ETW API expects you to pass `stdcall` callback to process events, so `etw` **requires CGO** to be used. 
-To use `etw` you need to have [mingw-w64](http://mingw-w64.org/) installed and pass some environment to the
-Go compiler (take a look at [build/vars.sh](./build/vars.sh) and [examples/tracer/Makefile](./examples/tracer/Makefile)).
+## Fork info
+
+This is a fork of https://github.com/bi-zone/etw that adds some functionality, especially:
+ - Looking up (manifest) providers at runtime
+ - Building without CGO
+ - Filtering on ETW sessions
+ - Registering for multiple providers in a single ETW session
 
 ## Docs
-Package reference is available at https://pkg.go.dev/github.com/bi-zone/etw
+Package reference is available at https://pkg.go.dev/github.com/secDre4mer/etw
 
 Examples are located in [examples](./examples) folder.
 
@@ -32,16 +36,22 @@ import (
 	"os/signal"
 	"sync"
 
-	"github.com/bi-zone/etw"
-	"golang.org/x/sys/windows"
+	"github.com/secDre4mer/etw"
 )
 
 func main() {
-	// Subscribe to Microsoft-Windows-DNS-Client
-	guid, _ := windows.GUIDFromString("{1C95126E-7EEA-49A9-A3FE-A378B03DDB4D}")
-	session, err := etw.NewSession(guid)
+	session, err := etw.NewSession()
 	if err != nil {
 		log.Fatalf("Failed to create etw session: %s", err)
+	}
+
+	// Subscribe to Microsoft-Windows-DNS-Client
+	dnsClient, err := etw.LookupProvider("Microsoft-Windows-DNS-Client")
+	if err != nil {
+		log.Fatalf("Failed to find DNS client provider: %s", err)
+    }
+	if err := session.AddProvider(dnsClient.Guid); err != nil {
+		log.Fatalf("Failed to register for provider: %v", err)
 	}
 
 	// Wait for "DNS query request" events to log outgoing DNS requests.
@@ -75,11 +85,6 @@ func main() {
 	wg.Wait()
 }
 
-```
-
-Note: to run the example you may need to pass CGO-specific variables to Go compiler, the easiest way to do it is:
-```shell script
-bash -c 'source ./build/vars.sh && go run main.go'
 ```
 
 More sophisticated examples can be found in [examples](./examples) folder.

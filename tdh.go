@@ -368,3 +368,22 @@ type traceProviderInfo struct {
 	SchemaSource       uint32
 	ProviderNameOffset uint32
 }
+
+// PROVIDER_EVENT_INFO, as described here: https://docs.microsoft.com/en-us/windows/win32/api/tdh/ns-tdh-provider_event_info
+type providerEventInfo struct {
+	NumberOfEvents uint32
+	_              uint32
+	descriptors    [anysizeArray]EventDescriptor
+}
+
+type providerFieldInfoArray struct {
+	NumberOfElements uint32
+	FieldType        uint32
+	FieldInfoArray   [anysizeArray]providerFieldInfo
+}
+
+type providerFieldInfo struct {
+	NameOffset        uint32
+	DescriptionOffset uint32
+	Value             uint64
+}

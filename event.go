@@ -341,15 +341,10 @@ type propertyDataDescriptor struct {
 	_            uint32
 }
 
-var (
-	tdhGetPropertySize = tdh.NewProc("TdhGetPropertySize")
-	tdhGetProperty     = tdh.NewProc("TdhGetProperty")
-)
-
 func getLengthFromProperty(event *eventRecordC, dataDescriptor *propertyDataDescriptor) (uint32, error) {
 	var propertySize, length uint32
 
-	status, _, _ := tdhGetPropertySize.Call(
+	status, _, _ := procTdhGetPropertySize.Call(
 		uintptr(unsafe.Pointer(event)),
 		0,
 		0,
@@ -361,7 +356,7 @@ func getLengthFromProperty(event *eventRecordC, dataDescriptor *propertyDataDesc
 	if windows.Errno(status) != windows.ERROR_SUCCESS {
 		return 0, windows.Errno(status)
 	}
-	status, _, _ = tdhGetProperty.Call(
+	status, _, _ = procTdhGetProperty.Call(
 		uintptr(unsafe.Pointer(event)),
 		0,
 		0,
@@ -443,15 +438,6 @@ func (p *propertyParser) parseStruct(propertyInfo eventPropertyInfoC) (map[strin
 	return structure, nil
 }
 
-// For some weird reasons non of mingw versions has TdhFormatProperty defined
-// so the only possible way is to use a DLL here.
-//
-//nolint:gochecknoglobals
-var (
-	tdh               = windows.NewLazySystemDLL("Tdh.dll")
-	tdhFormatProperty = tdh.NewProc("TdhFormatProperty")
-)
-
 // parseSimpleType wraps TdhFormatProperty to get rendered to string value of
 // @i-th event property.
 func (p *propertyParser) parseSimpleType(propertyInfo eventPropertyInfoC) (string, error) {
@@ -480,7 +466,7 @@ func (p *propertyParser) parseSimpleType(propertyInfo eventPropertyInfoC) (strin
 retryLoop:
 	for {
 		r0, _, _ := syscall.SyscallN(
-			tdhFormatProperty.Addr(),
+			procTdhFormatProperty.Addr(),
 			uintptr(unsafe.Pointer(p.record)),
 			uintptr(mapInfo),
 			p.ptrSize,

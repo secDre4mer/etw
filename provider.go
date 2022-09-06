@@ -2,19 +2,11 @@ package etw
 
 import (
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"unicode/utf16"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
-)
-
-var (
-	enumerateProviders                = tdh.NewProc("TdhEnumerateProviders")
-	enumerateProviderFieldInformation = tdh.NewProc("TdhEnumerateProviderFieldInformation")
-	queryProviderFieldInformation     = tdh.NewProc("TdhQueryProviderFieldInformation")
-	enumerateManifestProviderEvents   = tdh.NewProc("TdhEnumerateManifestProviderEvents")
 )
 
 type Provider struct {
@@ -28,31 +20,19 @@ type ProviderField struct {
 	ID          uint64
 }
 
-type providerFieldInfoArray struct {
-	NumberOfElements uint32
-	FieldType        uint32
-	FieldInfoArray   [0]providerFieldInfo
-}
-
-type providerFieldInfo struct {
-	NameOffset        uint32
-	DescriptionOffset uint32
-	Value             uint64
-}
-
-type eventFieldType uintptr
+type EventFieldType uint32
 
 const (
-	eventKeywordInformation eventFieldType = iota
-	eventLevelInformation
-	eventChannelInformation
-	eventTaskInformation
-	eventOpcodeInformation
+	EventKeywordInformation EventFieldType = iota
+	EventLevelInformation
+	EventChannelInformation
+	EventTaskInformation
+	EventOpcodeInformation
 )
 
 func (p Provider) QueryOpcode(taskValue uint16, opcodeValue uint8) (ProviderField, error) {
 	fieldValue := uint64(taskValue) + (uint64(opcodeValue) << 16)
-	fieldList, err := p.QueryField(fieldValue, eventOpcodeInformation)
+	fieldList, err := p.QueryField(fieldValue, EventOpcodeInformation)
 	if err != nil {
 		return ProviderField{}, err
 	}
@@ -63,7 +43,7 @@ func (p Provider) QueryOpcode(taskValue uint16, opcodeValue uint8) (ProviderFiel
 }
 
 func (p Provider) QueryTask(taskValue uint16) (ProviderField, error) {
-	fieldList, err := p.QueryField(uint64(taskValue), eventTaskInformation)
+	fieldList, err := p.QueryField(uint64(taskValue), EventTaskInformation)
 	if err != nil {
 		return ProviderField{}, err
 	}
@@ -73,70 +53,70 @@ func (p Provider) QueryTask(taskValue uint16) (ProviderField, error) {
 	return fieldList[0], nil
 }
 
-func (p Provider) QueryField(fieldValue uint64, fieldType eventFieldType) ([]ProviderField, error) {
-	var requiredSize int32
-	status, _, _ := queryProviderFieldInformation.Call(
-		uintptr(unsafe.Pointer(&p.Guid)),
-		uintptr(fieldValue),
-		uintptr(fieldType),
-		0,
-		uintptr(unsafe.Pointer(&requiredSize)),
+func (p Provider) QueryField(fieldValue uint64, fieldType EventFieldType) ([]ProviderField, error) {
+	var requiredSize uint32
+	err := queryProviderFieldInformation(
+		&p.Guid,
+		fieldValue,
+		fieldType,
+		nil,
+		&requiredSize,
 	)
-	if status != uintptr(windows.ERROR_INSUFFICIENT_BUFFER) {
-		return nil, windows.Errno(status)
+	if err != windows.ERROR_INSUFFICIENT_BUFFER {
+		return nil, err
 	}
 	if requiredSize == 0 {
 		return nil, nil
 	}
 	var buffer = make([]byte, requiredSize)
-	status, _, _ = queryProviderFieldInformation.Call(
-		uintptr(unsafe.Pointer(&p.Guid)),
-		uintptr(fieldValue),
-		uintptr(fieldType),
-		uintptr(unsafe.Pointer(&buffer[0])),
-		uintptr(unsafe.Pointer(&requiredSize)),
+	err = queryProviderFieldInformation(
+		&p.Guid,
+		fieldValue,
+		fieldType,
+		(*providerFieldInfoArray)(unsafe.Pointer(&buffer[0])),
+		&requiredSize,
 	)
-	if status != uintptr(windows.ERROR_SUCCESS) {
-		return nil, windows.Errno(status)
+	if err != nil {
+		return nil, err
 	}
 	return parseFieldInfoArray(buffer), nil
 }
 
 func (p Provider) ListKeywords() ([]ProviderField, error) {
-	return p.listFields(eventKeywordInformation)
+	return p.listFields(EventKeywordInformation)
 }
 
 func (p Provider) ListLevels() ([]ProviderField, error) {
-	return p.listFields(eventLevelInformation)
+	return p.listFields(EventLevelInformation)
 }
 
 func (p Provider) ListChannels() ([]ProviderField, error) {
-	return p.listFields(eventChannelInformation)
+	return p.listFields(EventChannelInformation)
 }
 
-func (p Provider) listFields(fieldType eventFieldType) ([]ProviderField, error) {
-	var requiredSize int32
-	status, _, _ := enumerateProviderFieldInformation.Call(
-		uintptr(unsafe.Pointer(&p.Guid)),
-		uintptr(fieldType),
-		0,
-		uintptr(unsafe.Pointer(&requiredSize)),
+func (p Provider) listFields(fieldType EventFieldType) ([]ProviderField, error) {
+	var requiredSize uint32
+	err := enumerateProviderFieldInformation(
+		&p.Guid,
+		fieldType,
+		nil,
+		&requiredSize,
 	)
-	if status != uintptr(windows.ERROR_INSUFFICIENT_BUFFER) {
-		return nil, windows.Errno(status)
+	if err != windows.ERROR_INSUFFICIENT_BUFFER {
+		return nil, err
 	}
 	if requiredSize == 0 {
 		return nil, nil
 	}
 	var buffer = make([]byte, requiredSize)
-	status, _, _ = enumerateProviderFieldInformation.Call(
-		uintptr(unsafe.Pointer(&p.Guid)),
-		uintptr(fieldType),
-		uintptr(unsafe.Pointer(&buffer[0])),
-		uintptr(unsafe.Pointer(&requiredSize)),
+	err = enumerateProviderFieldInformation(
+		&p.Guid,
+		fieldType,
+		(*providerFieldInfoArray)(unsafe.Pointer(&buffer[0])),
+		&requiredSize,
 	)
-	if status != uintptr(windows.ERROR_SUCCESS) {
-		return nil, windows.Errno(status)
+	if err != nil {
+		return nil, err
 	}
 	return parseFieldInfoArray(buffer), nil
 }
@@ -144,9 +124,8 @@ func (p Provider) listFields(fieldType eventFieldType) ([]ProviderField, error) 
 func parseFieldInfoArray(buffer []byte) []ProviderField {
 	infoArray := (*providerFieldInfoArray)(unsafe.Pointer(&buffer[0]))
 	// Recast field info array to escape golang boundary checks
-	fieldInfoArray := (*[anysizeArray]providerFieldInfo)(unsafe.Pointer(&infoArray.FieldInfoArray))
 	var fields []ProviderField
-	for _, fieldInfo := range fieldInfoArray[:infoArray.NumberOfElements] {
+	for _, fieldInfo := range infoArray.FieldInfoArray[:infoArray.NumberOfElements] {
 		fields = append(fields, ProviderField{
 			Name:        parseUnicodeStringAtOffset(buffer, int(fieldInfo.NameOffset)),
 			Description: parseUnicodeStringAtOffset(buffer, int(fieldInfo.DescriptionOffset)),
@@ -170,22 +149,22 @@ func LookupProvider(name string) (Provider, error) {
 }
 
 func ListProviders() ([]Provider, error) {
-	var requiredSize uintptr
-	enumerateProviders.Call(0, uintptr(unsafe.Pointer(&requiredSize)))
-	status := windows.ERROR_INSUFFICIENT_BUFFER
+	var requiredSize uint32
+	_ = enumerateProviders(nil, &requiredSize)
+	var err error = windows.ERROR_INSUFFICIENT_BUFFER
 	var buffer []byte
-	for status == windows.ERROR_INSUFFICIENT_BUFFER {
+	for err == windows.ERROR_INSUFFICIENT_BUFFER {
 		if requiredSize == 0 {
 			return nil, nil
 		}
 		buffer = make([]byte, requiredSize)
-		plainStatus, _, _ := enumerateProviders.Call(
-			uintptr(unsafe.Pointer(&buffer[0])),
-			uintptr(unsafe.Pointer(&requiredSize)))
-		status = windows.Errno(plainStatus)
+		err = enumerateProviders(
+			(*providerEnumerationInfo)(unsafe.Pointer(&buffer[0])),
+			&requiredSize,
+		)
 	}
-	if status != windows.ERROR_SUCCESS {
-		return nil, status
+	if err != nil {
+		return nil, err
 	}
 	var parsedProviders []Provider
 	enumerationInfo := (*providerEnumerationInfo)(unsafe.Pointer(&buffer[0]))
@@ -211,36 +190,22 @@ func parseUnicodeStringAtOffset(buffer []byte, offset int) string {
 }
 
 func (p Provider) ListEvents() ([]EventDescriptor, error) {
-	if enumerateManifestProviderEvents.Find() != nil {
-		return nil, errors.New("event listing is only supported on Windows 8.1 and newer")
-	}
-	var requiredBufferSize uint
-	err, _, _ := enumerateManifestProviderEvents.Call(
-		uintptr(unsafe.Pointer(&p.Guid)),
-		0,
-		uintptr(unsafe.Pointer(&requiredBufferSize)),
+	var requiredBufferSize uint32
+	err := enumerateManifestProviderEvents(
+		&p.Guid,
+		nil,
+		&requiredBufferSize,
 	)
-	if windows.Errno(err) != windows.ERROR_INSUFFICIENT_BUFFER {
-		return nil, fmt.Errorf("could not get buffer size for events: %w", windows.Errno(err))
+	if err != windows.ERROR_INSUFFICIENT_BUFFER {
+		return nil, fmt.Errorf("could not get buffer size for events: %w", err)
 	}
 	var buffer = make([]byte, requiredBufferSize)
-	err, _, _ = enumerateManifestProviderEvents.Call(
-		uintptr(unsafe.Pointer(&p.Guid)),
-		uintptr(unsafe.Pointer(&buffer[0])),
-		uintptr(unsafe.Pointer(&requiredBufferSize)),
-	)
-	if windows.Errno(err) != windows.ERROR_SUCCESS {
-		return nil, fmt.Errorf("could not list events: %w", windows.Errno(err))
+	err = enumerateManifestProviderEvents(&p.Guid, (*providerEventInfo)(unsafe.Pointer(&buffer[0])), &requiredBufferSize)
+	if err != windows.ERROR_SUCCESS {
+		return nil, fmt.Errorf("could not list events: %w", err)
 	}
 	eventInfo := (*providerEventInfo)(unsafe.Pointer(&buffer[0]))
 	var descriptors = make([]EventDescriptor, eventInfo.NumberOfEvents)
 	copy(descriptors, eventInfo.descriptors[:eventInfo.NumberOfEvents])
 	return descriptors, nil
-}
-
-// PROVIDER_EVENT_INFO, as described here: https://docs.microsoft.com/en-us/windows/win32/api/tdh/ns-tdh-provider_event_info
-type providerEventInfo struct {
-	NumberOfEvents uint32
-	_              uint32
-	descriptors    [anysizeArray]EventDescriptor
 }

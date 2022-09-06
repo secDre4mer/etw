@@ -114,3 +114,24 @@ func openTrace(logfile *eventTraceLogfile) (uint64, error) {
 	}
 	return traceHandle, nil
 }
+
+func queryProviderFieldInformation(guid *windows.GUID, eventFieldValue uint64, eventFieldType EventFieldType, buffer *providerFieldInfoArray, bufferSize *uint32) error {
+	// TDHSTATUS TdhQueryProviderFieldInformation(
+	//  [in]      LPGUID                    pGuid,
+	//  [in]      ULONGLONG                 EventFieldValue,
+	//  [in]      EVENT_FIELD_TYPE          EventFieldType,
+	//  [out]     PPROVIDER_FIELD_INFOARRAY pBuffer,
+	//  [in, out] ULONG                     *pBufferSize
+	// );
+	status, _, _ := procQueryProviderFieldInformation.Call(
+		uintptr(unsafe.Pointer(guid)),
+		uintptr(eventFieldValue),
+		uintptr(eventFieldType),
+		uintptr(unsafe.Pointer(buffer)),
+		uintptr(unsafe.Pointer(bufferSize)),
+	)
+	if err := windows.Errno(status); err != windows.ERROR_SUCCESS {
+		return err
+	}
+	return nil
+}

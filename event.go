@@ -595,8 +595,8 @@ func (p *propertyParser) getPropertyLength(propertyInfo eventPropertyInfoC) (uin
 }
 
 const (
-	TdhIntypeBinary = 14 // Undefined in MinGW.
-	TdhOuttypeIpv6  = 24 // Undefined in MinGW.
+	TdhIntypeBinary = 14
+	TdhOuttypeIpv6  = 24
 )
 
 //sys tdhGetEventInformation(event *eventRecordC, contextCount uint32, context unsafe.Pointer, buffer *uint8, bufferSize *uint32) (ret error) = tdh.TdhGetEventInformation

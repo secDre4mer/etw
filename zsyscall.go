@@ -186,10 +186,10 @@ func enumerateManifestProviderEvents(providerGuid *windows.GUID, buffer *provide
 	return
 }
 
-func enumerateProviderFieldInformation(guid *windows.GUID, fieldType EventFieldType, buffer *providerFieldInfoArray, bufferSize *uint32) (err error) {
-	r1, _, e1 := syscall.Syscall6(procTdhEnumerateProviderFieldInformation.Addr(), 4, uintptr(unsafe.Pointer(guid)), uintptr(fieldType), uintptr(unsafe.Pointer(buffer)), uintptr(unsafe.Pointer(bufferSize)), 0, 0)
-	if r1 == 0 {
-		err = errnoErr(e1)
+func enumerateProviderFieldInformation(guid *windows.GUID, fieldType EventFieldType, buffer *providerFieldInfoArray, bufferSize *uint32) (ret error) {
+	r0, _, _ := syscall.Syscall6(procTdhEnumerateProviderFieldInformation.Addr(), 4, uintptr(unsafe.Pointer(guid)), uintptr(fieldType), uintptr(unsafe.Pointer(buffer)), uintptr(unsafe.Pointer(bufferSize)), 0, 0)
+	if r0 != 0 {
+		ret = syscall.Errno(r0)
 	}
 	return
 }

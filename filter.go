@@ -159,5 +159,5 @@ func (e EventPayloadCompare) toPayloadFilterPredicate() (payloadFilterPredicate,
 
 //sys createPayloadFilter(providerGuid *windows.GUID, descriptor *EventDescriptor, eventMatchAny bool, payloadPredicateCount uint32, payloadPredicates *payloadFilterPredicate, payloadFilter *uintptr) (ret error) = tdh.TdhCreatePayloadFilter
 //sys deletePayloadFilter(payloadFilter *uintptr) (ret error) = tdh.TdhDeletePayloadFilter
-//sys aggregatePayloadFilters(payloadFilterCount uint32, payloadFilters *uintptr, eventMatchAllFlags *bool, filterDescriptor *eventFilterDescriptorC) (ret error) = tdh.TdhAggregatePayloadFilters
+//sys aggregatePayloadFilters(payloadFilterCount uint32, payloadFilters *uintptr, eventMatchAllFlags *uint32, filterDescriptor *eventFilterDescriptorC) (ret error) = tdh.TdhAggregatePayloadFilters
 //sys cleanupPayloadEventFilterDescriptor(filterDescriptor *eventFilterDescriptorC) (ret error) = tdh.TdhCleanupPayloadEventFilterDescriptor

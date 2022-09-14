@@ -142,13 +142,8 @@ func traceSetInformation_32(sessionHandleLower uint32, sessionHandleHigher uint3
 	return
 }
 
-func aggregatePayloadFilters(payloadFilterCount uint32, payloadFilters *uintptr, eventMatchAllFlags *bool, filterDescriptor *eventFilterDescriptorC) (ret error) {
-	var _p0 uint32
-	if *eventMatchAllFlags {
-		_p0 = 1
-	}
-	r0, _, _ := syscall.Syscall6(procTdhAggregatePayloadFilters.Addr(), 4, uintptr(payloadFilterCount), uintptr(unsafe.Pointer(payloadFilters)), uintptr(unsafe.Pointer(&_p0)), uintptr(unsafe.Pointer(filterDescriptor)), 0, 0)
-	*eventMatchAllFlags = _p0 != 0
+func aggregatePayloadFilters(payloadFilterCount uint32, payloadFilters *uintptr, eventMatchAllFlags *uint32, filterDescriptor *eventFilterDescriptorC) (ret error) {
+	r0, _, _ := syscall.Syscall6(procTdhAggregatePayloadFilters.Addr(), 4, uintptr(payloadFilterCount), uintptr(unsafe.Pointer(payloadFilters)), uintptr(unsafe.Pointer(eventMatchAllFlags)), uintptr(unsafe.Pointer(filterDescriptor)), 0, 0)
 	if r0 != 0 {
 		ret = syscall.Errno(r0)
 	}

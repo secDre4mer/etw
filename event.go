@@ -61,6 +61,16 @@ func (h EventHeader) HasCPUTime() bool {
 	}
 }
 
+// UserData returns the payload of the event as a raw slice.
+// This data usually needs interpretation, as EventProperties does, to map
+// it to single events. However, if for an event the data layout is already
+// known, this can be used to efficiently parse the data.
+// UserData gives a slice that points directly at the data returned by the API.
+// It should not be modified or used after the ETW callback has returned.
+func (e *Event) UserData() []byte {
+	return unsafe.Slice((*uint8)(e.eventRecord.UserData), e.eventRecord.UserDataLength)
+}
+
 // EventProperties returns a map that represents events-specific data provided
 // by event producer. Returned data depends on the provider, event type and even
 // provider and event versions.
@@ -236,8 +246,7 @@ type propertyParser struct {
 	record        *eventRecordC
 	info          *traceEventInfoC
 	infoBuffer    []byte
-	data          unsafe.Pointer
-	remainingData uintptr
+	data          []byte
 	ptrSize       uintptr
 	ignoreMapInfo bool
 
@@ -263,8 +272,7 @@ func newPropertyParser(r *eventRecordC, ignoreMapInfo bool) (*propertyParser, er
 		info:          info,
 		infoBuffer:    infoBuffer,
 		ptrSize:       ptrSize,
-		data:          r.UserData,
-		remainingData: uintptr(r.UserDataLength),
+		data:          unsafe.Slice((*uint8)(r.UserData), r.UserDataLength),
 		ignoreMapInfo: ignoreMapInfo,
 		parseBuffer:   dataBufferPool.Get().([]byte),
 	}, nil
@@ -448,8 +456,8 @@ retryLoop:
 			inType,
 			outType,
 			uint16(propertyLength),
-			uint16(p.remainingData),
-			(*uint8)(p.data),
+			uint16(len(p.data)),
+			&p.data[0],
 			&formattedDataSize,
 			&p.parseBuffer[0],
 			&userDataConsumed,
@@ -477,8 +485,7 @@ retryLoop:
 			return "", fmt.Errorf("TdhFormatProperty failed; %w", err)
 		}
 	}
-	p.data = unsafe.Add(p.data, userDataConsumed)
-	p.remainingData -= uintptr(userDataConsumed)
+	p.data = p.data[userDataConsumed:]
 
 	return createUTF16String(unsafe.Pointer(&p.parseBuffer[0]), int(formattedDataSize)), nil
 }

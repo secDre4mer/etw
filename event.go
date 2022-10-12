@@ -449,6 +449,10 @@ func (p *propertyParser) parseSimpleType(propertyInfo eventPropertyInfoC) (strin
 
 retryLoop:
 	for {
+		var dataPtr *uint8
+		if len(p.data) > 0 {
+			dataPtr = &p.data[0]
+		}
 		err := tdhFormatProperty(
 			p.record,
 			(*uint8)(mapInfo),
@@ -457,7 +461,7 @@ retryLoop:
 			outType,
 			uint16(propertyLength),
 			uint16(len(p.data)),
-			&p.data[0],
+			dataPtr,
 			&formattedDataSize,
 			&p.parseBuffer[0],
 			&userDataConsumed,

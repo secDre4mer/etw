@@ -500,6 +500,7 @@ func (s *Session) processEvents(callbackContextKey uintptr) error {
 	if err != nil {
 		return fmt.Errorf("OpenTraceW failed; %w", err)
 	}
+	defer closeTrace(traceHandle)
 
 	// BLOCKS UNTIL CLOSED!
 	err = processTrace(&traceHandle, 1, nil, nil)

@@ -201,7 +201,7 @@ func (p Provider) ListEvents() ([]EventDescriptor, error) {
 	}
 	var buffer = make([]byte, requiredBufferSize)
 	err = enumerateManifestProviderEvents(&p.Guid, (*providerEventInfo)(unsafe.Pointer(&buffer[0])), &requiredBufferSize)
-	if err != windows.ERROR_SUCCESS {
+	if err != nil {
 		return nil, fmt.Errorf("could not list events: %w", err)
 	}
 	eventInfo := (*providerEventInfo)(unsafe.Pointer(&buffer[0]))

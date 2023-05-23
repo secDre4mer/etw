@@ -1,6 +1,10 @@
 package etw
 
-import "golang.org/x/sys/windows"
+import (
+	"unsafe"
+
+	"golang.org/x/sys/windows"
+)
 
 type eventTrace struct {
 	eventTraceCommon
@@ -29,5 +33,7 @@ type enableTraceParameters struct {
 }
 
 type eventFilterDescriptorC struct {
-	eventFilterDescriptorCommon
+	Ptr  unsafe.Pointer
+	Size uint32
+	Type uint32
 }

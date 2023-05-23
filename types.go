@@ -326,12 +326,6 @@ const (
 	wnodeFlagSeverityMask        = 0xff000000
 )
 
-type eventFilterDescriptorCommon struct {
-	Ptr  unsafe.Pointer
-	Size uint32
-	Type uint32
-}
-
 type traceQueryInfoClass uint32
 
 const (

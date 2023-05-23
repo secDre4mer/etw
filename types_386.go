@@ -1,6 +1,10 @@
 package etw
 
-import "golang.org/x/sys/windows"
+import (
+	"unsafe"
+
+	"golang.org/x/sys/windows"
+)
 
 type eventTrace struct {
 	eventTraceCommon
@@ -32,6 +36,10 @@ type enableTraceParameters struct {
 }
 
 type eventFilterDescriptorC struct {
-	eventFilterDescriptorCommon
-	_ uint32 // Padding
+	// Ptr is a ULONGLONG, meaning a 64 bit value, even for 32 bit.
+	// Since a pointer is a 32 bit value, the higher bytes are always zero, so in little endian it's a 32 bit pointer followed by 4 zero bytes.
+	Ptr  unsafe.Pointer
+	_    uint32
+	Size uint32
+	Type uint32
 }

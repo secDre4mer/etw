@@ -24,6 +24,9 @@ type SessionOptions struct {
 	LogFileModes []LogFileMode
 
 	Kernel bool
+
+	// Maximum size of the file used to buffer events, in MB
+	MaximumFileSize uint32
 }
 
 // SessionOption is any function that modifies SessionOptions. Options will be called

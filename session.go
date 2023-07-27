@@ -257,6 +257,7 @@ func (s *Session) generateTraceProperties(config SessionOptions) []byte {
 	pProperties.Wnode.BufferSize = uint32(bufSize)
 	pProperties.Wnode.ClientContext = 1 // QPC for event Timestamp
 	pProperties.Wnode.Flags = wnodeFlagTracedGuid
+	pProperties.MaximumFileSize = config.MaximumFileSize
 
 	pProperties.LogFileMode = logFileMode
 

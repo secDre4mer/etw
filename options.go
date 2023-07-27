@@ -43,6 +43,14 @@ func WithName(name string) SessionOption {
 	}
 }
 
+// WithName specifies a maximum file size for the created session. A session may use
+// disk space up to the specified amount in MB.
+func WithMaximumFileSize(maximumFileSize uint32) SessionOption {
+	return func(cfg *SessionOptions) {
+		cfg.MaximumFileSize = maximumFileSize
+	}
+}
+
 // IgnoreMapInfo specifies whether event map information should be processed.
 // SessionOptions.IgnoreMapInfo has further information on this.
 func IgnoreMapInfo(ignoreMapInfo bool) SessionOption {

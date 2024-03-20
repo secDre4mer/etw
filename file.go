@@ -6,13 +6,18 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func ReadEtlFile(path string, callback EventCallback) error {
+func ReadEtlFile(path string, callback EventCallback, options ...SessionOption) error {
 	utf16Path, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return err
 	}
+	var config SessionOptions
+	for _, opt := range options {
+		opt(&config)
+	}
 	var session = &Session{
 		callback: callback,
+		config:   config,
 	}
 	callbackKey := newCallbackKey(session)
 	defer freeCallbackKey(callbackKey)
